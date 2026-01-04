@@ -882,3 +882,957 @@ def criar_dashboard_financeiro(analise_tese, analise_unfccc, preco_carbono, taxa
         
         # Recomendações específicas
         st.markdown("""
+        **📋 Recomendações de Decisão:**
+        
+        1. **Para Investidores Conservadores:**
+           - Priorize metodologia com menor CVaR
+           - Considere o limite inferior do IC 95% como cenário base
+           - Exija margem de segurança maior
+        
+        2. **Para Investidores Agressivos:**
+           - Foque no upside potencial
+           - Considere o limite superior do IC 95%
+           - Avalie a razão retorno/risco
+        
+        3. **Para Gestão de Projeto:**
+           - Implemente monitoramento contínuo dos parâmetros críticos
+           - Estabeleça triggers para ações corretivas
+           - Diversifique metodologias para reduzir risco
+        """)
+        
+        # Tabela de cenários
+        st.markdown("#### 📊 Cenários Financeiros")
+        
+        cenarios = pd.DataFrame({
+            'Cenário': ['Otimista', 'Mais Provável', 'Pessimista', 'Catastrófico'],
+            'Probabilidade': ['5%', '90%', '5%', '1%'],
+            'Tese - Valor (R$)': [
+                formatar_br(analise_tese['estatisticas']['p95'] * preco_carbono * taxa_cambio),
+                formatar_br(analise_tese['estatisticas']['media'] * preco_carbono * taxa_cambio),
+                formatar_br(analise_tese['estatisticas']['p5'] * preco_carbono * taxa_cambio),
+                formatar_br(analise_tese['estatisticas']['cvar_95'] * preco_carbono * taxa_cambio)
+            ],
+            'UNFCCC - Valor (R$)': [
+                formatar_br(analise_unfccc['estatisticas']['p95'] * preco_carbono * taxa_cambio),
+                formatar_br(analise_unfccc['estatisticas']['media'] * preco_carbono * taxa_cambio),
+                formatar_br(analise_unfccc['estatisticas']['p5'] * preco_carbono * taxa_cambio),
+                formatar_br(analise_unfccc['estatisticas']['cvar_95'] * preco_carbono * taxa_cambio)
+            ]
+        })
+        
+        st.dataframe(cenarios, use_container_width=True)
+        
+        return analise_tese, analise_unfccc
+
+def simulacao_cenarios(preco_base, cambio_base, media_tese, media_unfccc):
+    """
+    Simula diferentes cenários de preço e câmbio
+    """
+    st.subheader("🌍 Simulação de Cenários de Mercado")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### Preço do Carbono")
+        variacao_preco = st.slider(
+            "Variação no Preço (%)", 
+            -50, 100, 0, 10,
+            help="Simule variações no preço do carbono"
+        )
+        novo_preco = preco_base * (1 + variacao_preco/100)
+        st.metric("Novo Preço", f"€ {formatar_br(novo_preco)}", 
+                 delta=f"{variacao_preco}%")
+    
+    with col2:
+        st.markdown("#### Taxa de Câmbio")
+        variacao_cambio = st.slider(
+            "Variação no Câmbio (%)", 
+            -30, 50, 0, 5,
+            help="Simule variações na taxa EUR/BRL"
+        )
+        novo_cambio = cambio_base * (1 + variacao_cambio/100)
+        st.metric("Novo Câmbio", f"R$ {formatar_br(novo_cambio)}",
+                 delta=f"{variacao_cambio}%")
+    
+    # Recalcular valores
+    novo_valor_tese = media_tese * novo_preco * novo_cambio
+    novo_valor_unfccc = media_unfccc * novo_preco * novo_cambio
+    
+    st.markdown("#### 📊 Impacto Financeiro dos Cenários")
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    cenarios = ['Base', 'Otimista', 'Pessimista']
+    valores_tese = [
+        media_tese * preco_base * cambio_base,
+        media_tese * (preco_base * 1.5) * (cambio_base * 1.2),
+        media_tese * (preco_base * 0.5) * (cambio_base * 0.8)
+    ]
+    
+    valores_unfccc = [
+        media_unfccc * preco_base * cambio_base,
+        media_unfccc * (preco_base * 1.5) * (cambio_base * 1.2),
+        media_unfccc * (preco_base * 0.5) * (cambio_base * 0.8)
+    ]
+    
+    x = np.arange(len(cenarios))
+    ax.bar(x - 0.2, valores_tese, 0.4, label='Tese', color='blue')
+    ax.bar(x + 0.2, valores_unfccc, 0.4, label='UNFCCC', color='red')
+    
+    ax.set_xlabel('Cenário')
+    ax.set_ylabel('Valor (R$)')
+    ax.set_title('Sensibilidade Financeira a Cenários de Mercado')
+    ax.set_xticks(x)
+    ax.set_xticklabels(cenarios)
+    ax.legend()
+    ax.yaxis.set_major_formatter(FuncFormatter(br_format))
+    
+    st.pyplot(fig)
+    
+    st.info(f"""
+    **💡 Sensibilidade Financeira:**
+    - **Cada 10% no preço do carbono:** ±R$ {formatar_br(media_tese * preco_base * 0.1 * cambio_base)} na Tese
+    - **Cada 10% no câmbio:** ±R$ {formatar_br(media_tese * preco_base * cambio_base * 0.1)} na Tese
+    - **Exposição cambial:** {formatar_br((novo_preco * novo_cambio) / (preco_base * cambio_base) * 100)}% do valor original
+    """)
+
+# =============================================================================
+# NOVAS FUNÇÕES PARA ANÁLISE DE ROBUSTEZ COM MÚLTIPLOS SEEDS
+# =============================================================================
+
+def analise_robustez_multi_seeds(n_seeds=10, n_simulations=100):
+    """
+    Executa a simulação com múltiplos seeds diferentes
+    para analisar a robustez dos resultados
+    """
+    resultados_todos_seeds = {
+        'tese': [],
+        'unfccc': [],
+        'valor_tese_brl': [],
+        'valor_unfccc_brl': [],
+        'valor_tese_eur': [],
+        'valor_unfccc_eur': []
+    }
+    
+    seeds = list(range(1, n_seeds + 1))
+    
+    with st.spinner(f'Analisando robustez com {n_seeds} seeds diferentes...'):
+        progress_bar = st.progress(0)
+        
+        for i, seed in enumerate(seeds):
+            # Atualizar seed
+            np.random.seed(seed)
+            
+            # Executar simulações Monte Carlo com este seed
+            umidade_vals = np.random.uniform(0.75, 0.90, n_simulations)
+            temp_vals = np.random.normal(25, 3, n_simulations)
+            doc_vals = np.random.triangular(0.12, 0.15, 0.18, n_simulations)
+            
+            results_mc_tese = []
+            results_mc_unfccc = []
+            
+            for j in range(n_simulations):
+                params_tese = [umidade_vals[j], temp_vals[j], doc_vals[j]]
+                results_mc_tese.append(executar_simulacao_completa(params_tese))
+                results_mc_unfccc.append(executar_simulacao_unfccc(params_tese))
+            
+            # Calcular estatísticas para este seed
+            media_tese = np.mean(results_mc_tese)
+            media_unfccc = np.mean(results_mc_unfccc)
+            
+            # Calcular valores financeiros
+            valor_tese_eur = media_tese * st.session_state.preco_carbono
+            valor_unfccc_eur = media_unfccc * st.session_state.preco_carbono
+            valor_tese_brl = valor_tese_eur * st.session_state.taxa_cambio
+            valor_unfccc_brl = valor_unfccc_eur * st.session_state.taxa_cambio
+            
+            # Armazenar resultados
+            resultados_todos_seeds['tese'].append(media_tese)
+            resultados_todos_seeds['unfccc'].append(media_unfccc)
+            resultados_todos_seeds['valor_tese_brl'].append(valor_tese_brl)
+            resultados_todos_seeds['valor_unfccc_brl'].append(valor_unfccc_brl)
+            resultados_todos_seeds['valor_tese_eur'].append(valor_tese_eur)
+            resultados_todos_seeds['valor_unfccc_eur'].append(valor_unfccc_eur)
+            
+            progress_bar.progress((i + 1) / len(seeds))
+    
+    return resultados_todos_seeds, seeds
+
+def criar_visualizacao_robustez(resultados, seeds):
+    """
+    Cria visualizações para análise de robustez com múltiplos seeds
+    """
+    st.subheader("🔄 Análise de Robustez com Múltiplos Seeds")
+    
+    # Explicação
+    with st.expander("ℹ️ Sobre esta análise"):
+        st.markdown("""
+        **🎯 Objetivo:** Analisar como os resultados variam com diferentes seeds aleatórios
+        
+        **📊 Metodologia:**
+        - Cada seed gera uma sequência diferente de números aleatórios
+        - Executamos a simulação Monte Carlo para cada seed
+        - Analisamos a distribuição dos resultados entre seeds
+        
+        **💡 Por que isso importa:**
+        - Seed fixo (50) mostra apenas **um cenário possível**
+        - Múltiplos seeds mostram a **variabilidade real**
+        - Análise mais robusta de risco e incerteza
+        """)
+    
+    # Estatísticas entre seeds
+    st.markdown("#### 📈 Estatísticas entre Seeds")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.metric(
+            "Tese - Média entre seeds",
+            f"{formatar_br(np.mean(resultados['tese']))} tCO₂eq",
+            delta=f"±{formatar_br(np.std(resultados['tese']))}",
+            delta_color="off"
+        )
+        
+        st.metric(
+            "Tese - Valor em R$",
+            f"R$ {formatar_br(np.mean(resultados['valor_tese_brl']))}",
+            delta=f"±R$ {formatar_br(np.std(resultados['valor_tese_brl']))}",
+            delta_color="off"
+        )
+    
+    with col2:
+        st.metric(
+            "UNFCCC - Média entre seeds",
+            f"{formatar_br(np.mean(resultados['unfccc']))} tCO₂eq",
+            delta=f"±{formatar_br(np.std(resultados['unfccc']))}",
+            delta_color="off"
+        )
+        
+        st.metric(
+            "UNFCCC - Valor em R$",
+            f"R$ {formatar_br(np.mean(resultados['valor_unfccc_brl']))}",
+            delta=f"±R$ {formatar_br(np.std(resultados['valor_unfccc_brl']))}",
+            delta_color="off"
+        )
+    
+    # Gráfico 1: Boxplot comparativo
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Boxplot das emissões evitadas
+    data_emissoes = [resultados['tese'], resultados['unfccc']]
+    ax1.boxplot(data_emissoes, labels=['Tese', 'UNFCCC'])
+    ax1.set_title('Distribuição das Emissões Evitadas entre Seeds')
+    ax1.set_ylabel('tCO₂eq')
+    ax1.grid(True, alpha=0.3)
+    ax1.yaxis.set_major_formatter(FuncFormatter(br_format))
+    
+    # Boxplot dos valores em R$
+    data_valores = [resultados['valor_tese_brl'], resultados['valor_unfccc_brl']]
+    ax2.boxplot(data_valores, labels=['Tese', 'UNFCCC'])
+    ax2.set_title('Distribuição do Valor Financeiro entre Seeds')
+    ax2.set_ylabel('R$')
+    ax2.grid(True, alpha=0.3)
+    ax2.yaxis.set_major_formatter(FuncFormatter(br_format))
+    
+    plt.tight_layout()
+    st.pyplot(fig)
+    
+    # Gráfico 2: Evolução por seed
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+    
+    ax1.plot(seeds, resultados['tese'], 'bo-', label='Tese', linewidth=2)
+    ax1.plot(seeds, resultados['unfccc'], 'ro-', label='UNFCCC', linewidth=2)
+    ax1.fill_between(seeds, 
+                     np.array(resultados['tese']) - np.std(resultados['tese']),
+                     np.array(resultados['tese']) + np.std(resultados['tese']),
+                     alpha=0.2, color='blue')
+    ax1.fill_between(seeds,
+                     np.array(resultados['unfccc']) - np.std(resultados['unfccc']),
+                     np.array(resultados['unfccc']) + np.std(resultados['unfccc']),
+                     alpha=0.2, color='red')
+    ax1.set_xlabel('Seed')
+    ax1.set_ylabel('Emissões Evitadas (tCO₂eq)')
+    ax1.set_title('Evolução das Emissões Evitadas por Seed')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.yaxis.set_major_formatter(FuncFormatter(br_format))
+    
+    ax2.plot(seeds, resultados['valor_tese_brl'], 'bo-', label='Tese', linewidth=2)
+    ax2.plot(seeds, resultados['valor_unfccc_brl'], 'ro-', label='UNFCCC', linewidth=2)
+    ax2.fill_between(seeds,
+                     np.array(resultados['valor_tese_brl']) - np.std(resultados['valor_tese_brl']),
+                     np.array(resultados['valor_tese_brl']) + np.std(resultados['valor_tese_brl']),
+                     alpha=0.2, color='blue')
+    ax2.fill_between(seeds,
+                     np.array(resultados['valor_unfccc_brl']) - np.std(resultados['valor_unfccc_brl']),
+                     np.array(resultados['valor_unfccc_brl']) + np.std(resultados['valor_unfccc_brl']),
+                     alpha=0.2, color='red')
+    ax2.set_xlabel('Seed')
+    ax2.set_ylabel('Valor Financeiro (R$)')
+    ax2.set_title('Evolução do Valor Financeiro por Seed')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    ax2.yaxis.set_major_formatter(FuncFormatter(br_format))
+    
+    plt.tight_layout()
+    st.pyplot(fig)
+    
+    # Tabela de resultados detalhada
+    st.markdown("#### 📋 Resultados Detalhados por Seed")
+    
+    df_seeds = pd.DataFrame({
+        'Seed': seeds,
+        'Tese_Emissoes_tCO2eq': resultados['tese'],
+        'UNFCCC_Emissoes_tCO2eq': resultados['unfccc'],
+        'Tese_Valor_R$': resultados['valor_tese_brl'],
+        'UNFCCC_Valor_R$': resultados['valor_unfccc_brl'],
+        'Tese_Valor_€': resultados['valor_tese_eur'],
+        'UNFCCC_Valor_€': resultados['valor_unfccc_eur']
+    })
+    
+    # Formatar todas as colunas numéricas
+    for col in df_seeds.columns:
+        if col != 'Seed':
+            df_seeds[col] = df_seeds[col].apply(formatar_br)
+    
+    st.dataframe(df_seeds, use_container_width=True)
+    
+    # Análise de risco entre seeds
+    st.markdown("#### 🎯 Análise de Risco entre Seeds")
+    
+    # Calcular Coeficiente de Variação
+    cv_tese = (np.std(resultados['valor_tese_brl']) / np.mean(resultados['valor_tese_brl'])) * 100
+    cv_unfccc = (np.std(resultados['valor_unfccc_brl']) / np.mean(resultados['valor_unfccc_brl'])) * 100
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric(
+            "CV Tese (Risco Relativo)",
+            f"{cv_tese:.2f}%",
+            help="Coeficiente de Variação - quanto menor, mais estável"
+        )
+    
+    with col2:
+        st.metric(
+            "CV UNFCCC (Risco Relativo)",
+            f"{cv_unfccc:.2f}%",
+            help="Coeficiente de Variação - quanto menor, mais estável"
+        )
+    
+    with col3:
+        diferenca_risco = abs(cv_tese - cv_unfccc)
+        st.metric(
+            "Diferença de Risco",
+            f"{diferenca_risco:.2f}%",
+            help="Diferença no risco relativo entre metodologias"
+        )
+    
+    # Conclusões
+    with st.expander("📝 Conclusões da Análise de Robustez"):
+        st.markdown(f"""
+        **🔍 Principais Descobertas:**
+        
+        1. **Variabilidade dos Resultados:**
+           - Tese varia entre R$ {formatar_br(min(resultados['valor_tese_brl']))} e R$ {formatar_br(max(resultados['valor_tese_brl']))}
+           - UNFCCC varia entre R$ {formatar_br(min(resultados['valor_unfccc_brl']))} e R$ {formatar_br(max(resultados['valor_unfccc_brl']))}
+        
+        2. **Estabilidade Comparativa:**
+           - CV Tese: {cv_tese:.2f}% (risco relativo)
+           - CV UNFCCC: {cv_unfccc:.2f}% (risco relativo)
+           - {"Tese é mais estável" if cv_tese < cv_unfccc else "UNFCCC é mais estável"}
+        
+        3. **Impacto do Seed:**
+           - O seed inicial tem impacto de ±{formatar_br(np.std(resultados['tese']))} tCO₂eq na Tese
+           - Isso representa ±{formatar_br((np.std(resultados['valor_tese_brl']) / np.mean(resultados['valor_tese_brl'])) * 100)}% do valor
+        
+        4. **Recomendações:**
+           - Considere múltiplas execuções em análises de risco
+           - Seed fixo mostra apenas uma possibilidade
+           - Para tomada de decisão, use análise multi-seed
+        """)
+
+# =============================================================================
+# EXECUÇÃO DA SIMULAÇÃO
+# =============================================================================
+
+# Executar simulação quando solicitado
+if st.session_state.get('run_simulation', False):
+    with st.spinner('Executando simulação...'):
+        # Executar modelo base
+        params_base = [umidade, T, DOC]
+
+        ch4_aterro_dia, n2o_aterro_dia = calcular_emissoes_aterro(params_base)
+        ch4_vermi_dia, n2o_vermi_dia = calcular_emissoes_vermi(params_base)
+
+        # Construir DataFrame
+        df = pd.DataFrame({
+            'Data': datas,
+            'CH4_Aterro_kg_dia': ch4_aterro_dia,
+            'N2O_Aterro_kg_dia': n2o_aterro_dia,
+            'CH4_Vermi_kg_dia': ch4_vermi_dia,
+            'N2O_Vermi_kg_dia': n2o_vermi_dia,
+        })
+
+        for gas in ['CH4_Aterro', 'N2O_Aterro', 'CH4_Vermi', 'N2O_Vermi']:
+            df[f'{gas}_tCO2eq'] = df[f'{gas}_kg_dia'] * (GWP_CH4_20 if 'CH4' in gas else GWP_N2O_20) / 1000
+
+        df['Total_Aterro_tCO2eq_dia'] = df['CH4_Aterro_tCO2eq'] + df['N2O_Aterro_tCO2eq']
+        df['Total_Vermi_tCO2eq_dia'] = df['CH4_Vermi_tCO2eq'] + df['N2O_Vermi_tCO2eq']
+
+        df['Total_Aterro_tCO2eq_acum'] = df['Total_Aterro_tCO2eq_dia'].cumsum()
+        df['Total_Vermi_tCO2eq_acum'] = df['Total_Vermi_tCO2eq_dia'].cumsum()
+        df['Reducao_tCO2eq_acum'] = df['Total_Aterro_tCO2eq_acum'] - df['Total_Vermi_tCO2eq_acum']
+
+        # Resumo anual
+        df['Year'] = df['Data'].dt.year
+        df_anual_revisado = df.groupby('Year').agg({
+            'Total_Aterro_tCO2eq_dia': 'sum',
+            'Total_Vermi_tCO2eq_dia': 'sum',
+        }).reset_index()
+
+        df_anual_revisado['Emission reductions (t CO₂eq)'] = df_anual_revisado['Total_Aterro_tCO2eq_dia'] - df_anual_revisado['Total_Vermi_tCO2eq_dia']
+        df_anual_revisado['Cumulative reduction (t CO₂eq)'] = df_anual_revisado['Emission reductions (t CO₂eq)'].cumsum()
+
+        df_anual_revisado.rename(columns={
+            'Total_Aterro_tCO2eq_dia': 'Baseline emissions (t CO₂eq)',
+            'Total_Vermi_tCO2eq_dia': 'Project emissions (t CO₂eq)',
+        }, inplace=True)
+
+        # Cenário UNFCCC
+        ch4_compost_UNFCCC, n2o_compost_UNFCCC = calcular_emissoes_compostagem(
+            params_base, dias_simulacao=dias, dias_compostagem=50
+        )
+        ch4_compost_unfccc_tco2eq = ch4_compost_UNFCCC * GWP_CH4_20 / 1000
+        n2o_compost_unfccc_tco2eq = n2o_compost_UNFCCC * GWP_N2O_20 / 1000
+        total_compost_unfccc_tco2eq_dia = ch4_compost_unfccc_tco2eq + n2o_compost_unfccc_tco2eq
+
+        df_comp_unfccc_dia = pd.DataFrame({
+            'Data': datas,
+            'Total_Compost_tCO2eq_dia': total_compost_unfccc_tco2eq_dia
+        })
+        df_comp_unfccc_dia['Year'] = df_comp_unfccc_dia['Data'].dt.year
+
+        df_comp_anual_revisado = df_comp_unfccc_dia.groupby('Year').agg({
+            'Total_Compost_tCO2eq_dia': 'sum'
+        }).reset_index()
+
+        df_comp_anual_revisado = pd.merge(df_comp_anual_revisado,
+                                          df_anual_revisado[['Year', 'Baseline emissions (t CO₂eq)']],
+                                          on='Year', how='left')
+
+        df_comp_anual_revisado['Emission reductions (t CO₂eq)'] = df_comp_anual_revisado['Baseline emissions (t CO₂eq)'] - df_comp_anual_revisado['Total_Compost_tCO2eq_dia']
+        df_comp_anual_revisado['Cumulative reduction (t CO₂eq)'] = df_comp_anual_revisado['Emission reductions (t CO₂eq)'].cumsum()
+        df_comp_anual_revisado.rename(columns={'Total_Compost_tCO2eq_dia': 'Project emissions (t CO₂eq)'}, inplace=True)
+
+        # =============================================================================
+        # EXIBIÇÃO DOS RESULTADOS COM COTAÇÃO DO CARBONO E REAL
+        # =============================================================================
+
+        # Exibir resultados
+        st.header("📈 Resultados da Simulação")
+        
+        # Obter valores totais
+        total_evitado_tese = df['Reducao_tCO2eq_acum'].iloc[-1]
+        total_evitado_unfccc = df_comp_anual_revisado['Cumulative reduction (t CO₂eq)'].iloc[-1]
+        
+        # Obter preço do carbono e taxa de câmbio da session state
+        preco_carbono = st.session_state.preco_carbono
+        moeda = st.session_state.moeda_carbono
+        taxa_cambio = st.session_state.taxa_cambio
+        fonte_cotacao = st.session_state.fonte_cotacao
+        
+        # Calcular valores financeiros em Euros
+        valor_tese_eur = calcular_valor_creditos(total_evitado_tese, preco_carbono, moeda)
+        valor_unfccc_eur = calcular_valor_creditos(total_evitado_unfccc, preco_carbono, moeda)
+        
+        # Calcular valores financeiros em Reais
+        valor_tese_brl = calcular_valor_creditos(total_evitado_tese, preco_carbono, "R$", taxa_cambio)
+        valor_unfccc_brl = calcular_valor_creditos(total_evitado_unfccc, preco_carbono, "R$", taxa_cambio)
+        
+        # NOVA SEÇÃO: VALOR FINANCEIRO DAS EMISSÕES EVITADAS
+        st.subheader("💰 Valor Financeiro das Emissões Evitadas")
+        
+        # Primeira linha: Euros
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                f"Preço Carbono (Euro)", 
+                f"{moeda} {preco_carbono:.2f}/tCO₂eq",
+                help=f"Fonte: {fonte_cotacao}"
+            )
+        with col2:
+            st.metric(
+                "Valor Tese (Euro)", 
+                f"{moeda} {formatar_br(valor_tese_eur)}",
+                help=f"Baseado em {formatar_br(total_evitado_tese)} tCO₂eq evitadas"
+            )
+        with col3:
+            st.metric(
+                "Valor UNFCCC (Euro)", 
+                f"{moeda} {formatar_br(valor_unfccc_eur)}",
+                help=f"Baseado em {formatar_br(total_evitado_unfccc)} tCO₂eq evitadas"
+            )
+        
+        # Segunda linha: Reais
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                f"Preço Carbono (R$)", 
+                f"R$ {formatar_br(preco_carbono * taxa_cambio)}/tCO₂eq",
+                help="Preço do carbono convertido para Reais"
+            )
+        with col2:
+            st.metric(
+                "Valor Tese (R$)", 
+                f"R$ {formatar_br(valor_tese_brl)}",
+                help=f"Baseado em {formatar_br(total_evitado_tese)} tCO₂eq evitadas"
+            )
+        with col3:
+            st.metric(
+                "Valor UNFCCC (R$)", 
+                f"R$ {formatar_br(valor_unfccc_brl)}",
+                help=f"Baseado em {formatar_br(total_evitado_unfccc)} tCO₂eq evitadas"
+            )
+        
+        # Explicação sobre compra e venda
+        with st.expander("💡 Como funciona a comercialização no mercado de carbono?"):
+            st.markdown(f"""
+            **📊 Informações de Mercado:**
+            - **Preço em Euro:** {moeda} {preco_carbono:.2f}/tCO₂eq
+            - **Preço em Real:** R$ {formatar_br(preco_carbono * taxa_cambio)}/tCO₂eq
+            - **Taxa de câmbio:** 1 Euro = R$ {taxa_cambio:.2f}
+            - **Fonte:** {fonte_cotacao}
+            
+            **💶 Comprar créditos (compensação):**
+            - Custo em Euro: **{moeda} {formatar_br(valor_tese_eur)}**
+            - Custo em Real: **R$ {formatar_br(valor_tese_brl)}**
+            
+            **💵 Vender créditos (comercialização):**  
+            - Receita em Euro: **{moeda} {formatar_br(valor_tese_eur)}**
+            - Receita em Real: **R$ {formatar_br(valor_tese_brl)}**
+            
+            **🌍 Mercado de Referência:**
+            - European Union Allowances (EUA)
+            - European Emissions Trading System (EU ETS)
+            - Contratos futuros de carbono
+            - Preços em tempo real do mercado regulado
+            """)
+        
+        # =============================================================================
+        # SEÇÃO ATUALIZADA: RESUMO DAS EMISSÕES EVITADAS COM MÉTRICAS ANUAIS REORGANIZADAS
+        # =============================================================================
+        
+        # Métricas de emissões evitadas - layout reorganizado
+        st.subheader("📊 Resumo das Emissões Evitadas")
+        
+        # Calcular médias anuais
+        media_anual_tese = total_evitado_tese / anos_simulacao
+        media_anual_unfccc = total_evitado_unfccc / anos_simulacao
+        
+        # Layout com duas colunas principais
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("#### 📋 Metodologia da Tese")
+            st.metric(
+                "Total de emissões evitadas", 
+                f"{formatar_br(total_evitado_tese)} tCO₂eq",
+                help=f"Total acumulado em {anos_simulacao} anos"
+            )
+            st.metric(
+                "Média anual", 
+                f"{formatar_br(media_anual_tese)} tCO₂eq/ano",
+                help=f"Emissões evitadas por ano em média"
+            )
+
+        with col2:
+            st.markdown("#### 📋 Metodologia UNFCCC")
+            st.metric(
+                "Total de emissões evitadas", 
+                f"{formatar_br(total_evitado_unfccc)} tCO₂eq",
+                help=f"Total acumulado em {anos_simulacao} anos"
+            )
+            st.metric(
+                "Média anual", 
+                f"{formatar_br(media_anual_unfccc)} tCO₂eq/ano",
+                help=f"Emissões evitadas por ano em média"
+            )
+
+        # Adicionar explicação sobre as métricas anuais
+        with st.expander("💡 Entenda as métricas anuais"):
+            st.markdown(f"""
+            **📊 Como interpretar as métricas anuais:**
+            
+            **Metodologia da Tese:**
+            - **Total em {anos_simulacao} anos:** {formatar_br(total_evitado_tese)} tCO₂eq
+            - **Média anual:** {formatar_br(media_anual_tese)} tCO₂eq/ano
+            - Equivale a aproximadamente **{formatar_br(media_anual_tese / 365)} tCO₂eq/dia**
+            
+            **Metodologia UNFCCC:**
+            - **Total em {anos_simulacao} anos:** {formatar_br(total_evitado_unfccc)} tCO₂eq
+            - **Média anual:** {formatar_br(media_anual_unfccc)} tCO₂eq/ano
+            - Equivale a aproximadamente **{formatar_br(media_anual_unfccc / 365)} tCO₂eq/dia**
+            
+            **💡 Significado prático:**
+            - As métricas anuais ajudam a planejar projetos de longo prazo
+            - Permitem comparar com metas anuais de redução de emissões
+            - Facilitam o cálculo de retorno financeiro anual
+            - A média anual representa o desempenho constante do projeto
+            """)
+
+        # Gráfico comparativo
+        st.subheader("📊 Comparação Anual das Emissões Evitadas")
+        df_evitadas_anual = pd.DataFrame({
+            'Year': df_anual_revisado['Year'],
+            'Proposta da Tese': df_anual_revisado['Emission reductions (t CO₂eq)'],
+            'UNFCCC (2012)': df_comp_anual_revisado['Emission reductions (t CO₂eq)']
+        })
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        br_formatter = FuncFormatter(br_format)
+        x = np.arange(len(df_evitadas_anual['Year']))
+        bar_width = 0.35
+
+        ax.bar(x - bar_width/2, df_evitadas_anual['Proposta da Tese'], width=bar_width,
+                label='Proposta da Tese', edgecolor='black')
+        ax.bar(x + bar_width/2, df_evitadas_anual['UNFCCC (2012)'], width=bar_width,
+                label='UNFCCC (2012)', edgecolor='black', hatch='//')
+
+        # Adicionar valores formatados em cima das barras
+        for i, (v1, v2) in enumerate(zip(df_evitadas_anual['Proposta da Tese'], 
+                                         df_evitadas_anual['UNFCCC (2012)'])):
+            ax.text(i - bar_width/2, v1 + max(v1, v2)*0.01, 
+                    formatar_br(v1), ha='center', fontsize=9, fontweight='bold')
+            ax.text(i + bar_width/2, v2 + max(v1, v2)*0.01, 
+                    formatar_br(v2), ha='center', fontsize=9, fontweight='bold')
+
+        ax.set_xlabel('Ano')
+        ax.set_ylabel('Emissões Evitadas (t CO₂eq)')
+        ax.set_title('Comparação Anual das Emissões Evitadas: Proposta da Tese vs UNFCCC (2012)')
+        
+        # Ajustar o eixo x para ser igual ao do gráfico de redução acumulada
+        ax.set_xticks(x)
+        ax.set_xticklabels(df_anual_revisado['Year'], fontsize=8)
+
+        ax.legend(title='Metodologia')
+        ax.yaxis.set_major_formatter(br_formatter)
+        ax.grid(axis='y', linestyle='--', alpha=0.7)
+        st.pyplot(fig)
+
+        # Gráfico de redução acumulada
+        st.subheader("📉 Redução de Emissões Acumulada")
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.plot(df['Data'], df['Total_Aterro_tCO2eq_acum'], 'r-', label='Cenário Base (Aterro Sanitário)', linewidth=2)
+        ax.plot(df['Data'], df['Total_Vermi_tCO2eq_acum'], 'g-', label='Projeto (Compostagem em reatores com minhocas)', linewidth=2)
+        ax.fill_between(df['Data'], df['Total_Vermi_tCO2eq_acum'], df['Total_Aterro_tCO2eq_acum'],
+                        color='skyblue', alpha=0.5, label='Emissões Evitadas')
+        ax.set_title('Redução de Emissões em {} Anos'.format(anos_simulacao))
+        ax.set_xlabel('Ano')
+        ax.set_ylabel('tCO₂eq Acumulado')
+        ax.legend()
+        ax.grid(True, linestyle='--', alpha=0.7)
+        ax.yaxis.set_major_formatter(br_formatter)
+
+        st.pyplot(fig)
+
+        # Análise de Sensibilidade Global (Sobol) - PROPOSTA DA TESE
+        st.subheader("🎯 Análise de Sensibilidade Global (Sobol) - Proposta da Tese")
+        br_formatter_sobol = FuncFormatter(br_format)
+
+        np.random.seed(50)  
+        
+        problem_tese = {
+            'num_vars': 3,
+            'names': ['umidade', 'T', 'DOC'],
+            'bounds': [
+                [0.5, 0.85],         # umidade
+                [25.0, 45.0],       # temperatura
+                [0.15, 0.50],       # doc
+            ]
+        }
+
+        param_values_tese = sample(problem_tese, n_samples)
+        results_tese = Parallel(n_jobs=-1)(delayed(executar_simulacao_completa)(params) for params in param_values_tese)
+        Si_tese = analyze(problem_tese, np.array(results_tese), print_to_console=False)
+        
+        sensibilidade_df_tese = pd.DataFrame({
+            'Parámetro': problem_tese['names'],
+            'S1': Si_tese['S1'],
+            'ST': Si_tese['ST']
+        }).sort_values('ST', ascending=False)
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.barplot(x='ST', y='Parámetro', data=sensibilidade_df_tese, palette='viridis', ax=ax)
+        ax.set_title('Sensibilidade Global dos Parâmetros (Índice Sobol Total) - Proposta da Tese')
+        ax.set_xlabel('Índice ST')
+        ax.set_ylabel('')
+        ax.grid(axis='x', linestyle='--', alpha=0.7)
+        ax.xaxis.set_major_formatter(br_formatter_sobol) # Adiciona formatação ao eixo x
+        st.pyplot(fig)
+
+        # Análise de Sensibilidade Global (Sobol) - CENÁRIO UNFCCC
+        st.subheader("🎯 Análise de Sensibilidade Global (Sobol) - Cenário UNFCCC")
+
+        np.random.seed(50)
+        
+        problem_unfccc = {
+            'num_vars': 3,
+            'names': ['umidade', 'T', 'DOC'],
+            'bounds': [
+                [0.5, 0.85],  # Umidade
+                [25, 45],     # Temperatura
+                [0.15, 0.50], # DOC
+            ]
+        }
+
+        param_values_unfccc = sample(problem_unfccc, n_samples)
+        results_unfccc = Parallel(n_jobs=-1)(delayed(executar_simulacao_unfccc)(params) for params in param_values_unfccc)
+        Si_unfccc = analyze(problem_unfccc, np.array(results_unfccc), print_to_console=False)
+        
+        sensibilidade_df_unfccc = pd.DataFrame({
+            'Parámetro': problem_unfccc['names'],
+            'S1': Si_unfccc['S1'],
+            'ST': Si_unfccc['ST']
+        }).sort_values('ST', ascending=False)
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.barplot(x='ST', y='Parámetro', data=sensibilidade_df_unfccc, palette='viridis', ax=ax)
+        ax.set_title('Sensibilidade Global dos Parâmetros (Índice Sobol Total) - Cenário UNFCCC')
+        ax.set_xlabel('Índice ST')
+        ax.set_ylabel('')
+        ax.grid(axis='x', linestyle='--', alpha=0.7)
+        ax.xaxis.set_major_formatter(br_formatter_sobol) # Adiciona formatação ao eixo x
+        st.pyplot(fig)
+
+        # Análise de Incerteza (Monte Carlo) - PROPOSTA DA TESE
+        st.subheader("🎲 Análise de Incerteza (Monte Carlo) - Proposta da Tese")
+
+        
+        def gerar_parametros_mc_tese(n):
+            np.random.seed(50)
+            umidade_vals = np.random.uniform(0.75, 0.90, n)
+            temp_vals = np.random.normal(25, 3, n)
+            doc_vals = np.random.triangular(0.12, 0.15, 0.18, n)
+            
+            return umidade_vals, temp_vals, doc_vals
+
+        umidade_vals, temp_vals, doc_vals = gerar_parametros_mc_tese(n_simulations)
+        
+        results_mc_tese = []
+        for i in range(n_simulations):
+            params_tese = [umidade_vals[i], temp_vals[i], doc_vals[i]]
+            results_mc_tese.append(executar_simulacao_completa(params_tese))
+
+        results_array_tese = np.array(results_mc_tese)
+        media_tese = np.mean(results_array_tese)
+        intervalo_95_tese = np.percentile(results_array_tese, [2.5, 97.5])
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.histplot(results_array_tese, kde=True, bins=30, color='skyblue', ax=ax)
+        ax.axvline(media_tese, color='red', linestyle='--', label=f'Média: {formatar_br(media_tese)} tCO₂eq')
+        ax.axvline(intervalo_95_tese[0], color='green', linestyle=':', label='IC 95%')
+        ax.axvline(intervalo_95_tese[1], color='green', linestyle=':')
+        ax.set_title('Distribuição das Emissões Evitadas (Simulação Monte Carlo) - Proposta da Tese')
+        ax.set_xlabel('Emissões Evitadas (tCO₂eq)')
+        ax.set_ylabel('Frequência')
+        ax.legend()
+        ax.grid(alpha=0.3)
+        ax.xaxis.set_major_formatter(br_formatter)
+        st.pyplot(fig)
+
+        # Análise de Incerteza (Monte Carlo) - CENÁRIO UNFCCC
+        st.subheader("🎲 Análise de Incerteza (Monte Carlo) - Cenário UNFCCC")
+        
+        def gerar_parametros_mc_unfccc(n):
+            np.random.seed(50)
+            umidade_vals = np.random.uniform(0.75, 0.90, n)
+            temp_vals = np.random.normal(25, 3, n)
+            doc_vals = np.random.triangular(0.12, 0.15, 0.18, n)
+            
+            return umidade_vals, temp_vals, doc_vals
+
+        umidade_vals, temp_vals, doc_vals = gerar_parametros_mc_unfccc(n_simulations)
+        
+        results_mc_unfccc = []
+        for i in range(n_simulations):
+            params_unfccc = [umidade_vals[i], temp_vals[i], doc_vals[i]]
+            results_mc_unfccc.append(executar_simulacao_unfccc(params_unfccc))
+
+        results_array_unfccc = np.array(results_mc_unfccc)
+        media_unfccc = np.mean(results_array_unfccc)
+        intervalo_95_unfccc = np.percentile(results_array_unfccc, [2.5, 97.5])
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.histplot(results_array_unfccc, kde=True, bins=30, color='coral', ax=ax)
+        ax.axvline(media_unfccc, color='red', linestyle='--', label=f'Média: {formatar_br(media_unfccc)} tCO₂eq')
+        ax.axvline(intervalo_95_unfccc[0], color='green', linestyle=':', label='IC 95%')
+        ax.axvline(intervalo_95_unfccc[1], color='green', linestyle=':')
+        ax.set_title('Distribuição das Emissões Evitadas (Simulação Monte Carlo) - Cenário UNFCCC')
+        ax.set_xlabel('Emissões Evitadas (tCO₂eq)')
+        ax.set_ylabel('Frequência')
+        ax.legend()
+        ax.grid(alpha=0.3)
+        ax.xaxis.set_major_formatter(br_formatter)
+        st.pyplot(fig)
+
+        # =============================================================================
+        # ANÁLISE FINANCEIRA DE RISCO DETALHADA
+        # =============================================================================
+
+        st.header("💰 Análise Financeira de Risco Detalhada")
+
+        # Executar análises financeiras
+        analise_tese = analise_financeira_risco(
+            resultados_mc=results_mc_tese,
+            preco_carbono=st.session_state.preco_carbono,
+            taxa_cambio=st.session_state.taxa_cambio,
+            nome_metodologia="Proposta da Tese"
+        )
+
+        analise_unfccc = analise_financeira_risco(
+            resultados_mc=results_mc_unfccc,
+            preco_carbono=st.session_state.preco_carbono,
+            taxa_cambio=st.session_state.taxa_cambio,
+            nome_metodologia="Cenário UNFCCC"
+        )
+
+        # Exibir dashboard
+        criar_dashboard_financeiro(
+            analise_tese=analise_tese,
+            analise_unfccc=analise_unfccc,
+            preco_carbono=st.session_state.preco_carbono,
+            taxa_cambio=st.session_state.taxa_cambio,
+            results_array_tese=results_array_tese,
+            results_array_unfccc=results_array_unfccc
+        )
+
+        # =============================================================================
+        # RESUMO EXECUTIVO FINANCEIRO
+        # =============================================================================
+
+        with st.expander("📋 Resumo Executivo Financeiro", expanded=True):
+            st.markdown(f"""
+            ## 📊 Resumo Financeiro do Projeto
+            
+            **💰 Preços de Mercado:**
+            - Preço do Carbono: {st.session_state.moeda_carbono} {formatar_br(st.session_state.preco_carbono)}/tCO₂eq
+            - Câmbio EUR/BRL: R$ {formatar_br(st.session_state.taxa_cambio)}
+            - Carbono em Reais: R$ {formatar_br(st.session_state.preco_carbono * st.session_state.taxa_cambio)}/tCO₂eq
+            
+            **🎯 Proposta da Tese:**
+            - **Valor Esperado:** R$ {formatar_br(analise_tese['financeiro_brl']['valor_medio'])}
+            - **Com 95% de Confiança:** Entre R$ {formatar_br(analise_tese['financeiro_brl']['valor_medio'] - analise_tese['financeiro_brl']['downside'])} e R$ {formatar_br(analise_tese['financeiro_brl']['valor_medio'] + analise_tese['financeiro_brl']['upside'])}
+            - **Downside Potencial:** R$ {formatar_br(analise_tese['financeiro_brl']['downside'])}
+            - **Upside Potencial:** R$ {formatar_br(analise_tese['financeiro_brl']['upside'])}
+            
+            **📋 Cenário UNFCCC:**
+            - **Valor Esperado:** R$ {formatar_br(analise_unfccc['financeiro_brl']['valor_medio'])}
+            - **Com 95% de Confiança:** Entre R$ {formatar_br(analise_unfccc['financeiro_brl']['valor_medio'] - analise_unfccc['financeiro_brl']['downside'])} e R$ {formatar_br(analise_unfccc['financeiro_brl']['valor_medio'] + analise_unfccc['financeiro_brl']['upside'])}
+            - **Downside Potencial:** R$ {formatar_br(analise_unfccc['financeiro_brl']['downside'])}
+            - **Upside Potencial:** R$ {formatar_br(analise_unfccc['financeiro_brl']['upside'])}
+            
+            **⚖️ Trade-off Decisório:**
+            - **Diferença de Valor:** R$ {formatar_br(analise_tese['financeiro_brl']['valor_medio'] - analise_unfccc['financeiro_brl']['valor_medio'])}
+            - **Diferença de Risco (CVaR):** R$ {formatar_br(analise_tese['financeiro_brl']['valor_cvar'] - analise_unfccc['financeiro_brl']['valor_cvar'])}
+            - **Razão Retorno/Risco Tese:** {formatar_br(analise_tese['financeiro_brl']['valor_medio'] / analise_tese['financeiro_brl']['valor_cvar'] if analise_tese['financeiro_brl']['valor_cvar'] > 0 else '∞')}
+            - **Razão Retorno/Risco UNFCCC:** {formatar_br(analise_unfccc['financeiro_brl']['valor_medio'] / analise_unfccc['financeiro_brl']['valor_cvar'] if analise_unfccc['financeiro_brl']['valor_cvar'] > 0 else '∞')}
+            """)
+
+        # =============================================================================
+        # SIMULAÇÃO DE CENÁRIOS DE MERCADO
+        # =============================================================================
+
+        simulacao_cenarios(
+            preco_base=st.session_state.preco_carbono,
+            cambio_base=st.session_state.taxa_cambio,
+            media_tese=media_tese,
+            media_unfccc=media_unfccc
+        )
+
+        # Análise Estatística de Comparação
+        st.subheader("📊 Análise Estatística de Comparação")
+        
+        # Teste de normalidade para as diferenças
+        diferencas = results_array_tese - results_array_unfccc
+        _, p_valor_normalidade_diff = stats.normaltest(diferencas)
+        st.write(f"Teste de normalidade das diferenças (p-value): **{p_valor_normalidade_diff:.5f}**")
+
+        # Teste T pareado
+        ttest_pareado, p_ttest_pareado = stats.ttest_rel(results_array_tese, results_array_unfccc)
+        st.write(f"Teste T pareado: Estatística t = **{ttest_pareado:.5f}**, P-valor = **{p_ttest_pareado:.5f}**")
+
+        # Teste de Wilcoxon para amostras pareadas
+        wilcoxon_stat, p_wilcoxon = stats.wilcoxon(results_array_tese, results_array_unfccc)
+        st.write(f"Teste de Wilcoxon (pareado): Estatística = **{wilcoxon_stat:.5f}**, P-valor = **{p_wilcoxon:.5f}**")
+
+        # Tabela de resultados anuais - Proposta da Tese
+        st.subheader("📋 Resultados Anuais - Proposta da Tese")
+
+        # Criar uma cópia para formatação
+        df_anual_formatado = df_anual_revisado.copy()
+        for col in df_anual_formatado.columns:
+            if col != 'Year':
+                df_anual_formatado[col] = df_anual_formatado[col].apply(formatar_br)
+
+        st.dataframe(df_anual_formatado)
+
+        # Tabela de resultados anuais - Metodologia UNFCCC
+        st.subheader("📋 Resultados Anuais - Metodologia UNFCCC")
+
+        # Criar uma cópia para formatação
+        df_comp_formatado = df_comp_anual_revisado.copy()
+        for col in df_comp_formatado.columns:
+            if col != 'Year':
+                df_comp_formatado[col] = df_comp_formatado[col].apply(formatar_br)
+
+        st.dataframe(df_comp_formatado)
+
+        # =============================================================================
+        # ANÁLISE DE ROBUSTEZ COM MÚLTIPLOS SEEDS (NOVA SEÇÃO)
+        # =============================================================================
+
+        st.markdown("---")
+        st.header("🔄 Análise de Robustez com Diferentes Seeds Aleatórios")
+        
+        with st.expander("🔍 Clique para executar análise de robustez (opcional)"):
+            st.markdown("""
+            **Esta análise executa a simulação com diferentes seeds aleatórios para avaliar a variabilidade real dos resultados.**
+            
+            *Por padrão usamos seed=50 para garantir reprodutibilidade, mas diferentes seeds geram diferentes sequências aleatórias.*
+            """)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                n_seeds = st.slider("Número de seeds diferentes", 3, 20, 5)
+            with col2:
+                n_sim_per_seed = st.slider("Simulações por seed", 50, 500, 100)
+            
+            if st.button("🔄 Executar Análise de Robustez", type="secondary"):
+                resultados, seeds = analise_robustez_multi_seeds(
+                    n_seeds=n_seeds, 
+                    n_simulations=n_sim_per_seed
+                )
+                criar_visualizacao_robustez(resultados, seeds)
+
+else:
+    st.info("💡 Ajuste os parâmetros na barra lateral e clique em 'Executar Simulação' para ver os resultados.")
+
+# Rodapé
+st.markdown("---")
+st.markdown("""
+
+**📚 Referências por Cenário:**
+
+**Cenário de Baseline (Aterro Sanitário):**
+- Metano: IPCC (2006), UNFCCC (2016) e Wang et al. (2023) 
+- Óxido Nitroso: Wang et al. (2017)
+- Metano e Óxido Nitroso no pré-descarte: Feng et al. (2020)
+
+**Proposta da Tese (Compostagem em reatores com minhocas):**
+- Metano e Óxido Nitroso: Yang et al. (2017)
+
+**Cenário UNFCCC (Compostagem sem minhocas a céu aberto):**
+- Protocolo AMS-III.F: UNFCCC (2016)
+- Fatores de emissões: Yang et al. (2017)
+""")
