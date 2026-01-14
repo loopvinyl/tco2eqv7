@@ -5,8 +5,6 @@ import requests
 from io import BytesIO
 import matplotlib.pyplot as plt
 import unicodedata
-import plotly.graph_objects as go
-import plotly.express as px
 
 # Configuração da página
 st.set_page_config(
@@ -427,8 +425,6 @@ def main():
                     
                     if pd.notna(massa) and massa > 0:
                         # Cálculo de métricas
-                        per_capita_anual = (massa * 1000) / 365  # Estimativa populacional
-                        per_capita_diario = per_capita_anual / 365
                         populacao_estimada = (massa * 1000) / 365.21  # Usando média nacional
                         
                         # Exibição de métricas
