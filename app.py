@@ -5,6 +5,8 @@ import requests
 from io import BytesIO
 import matplotlib.pyplot as plt
 import unicodedata
+import plotly.graph_objects as go
+import plotly.express as px
 
 # Configuração da página
 st.set_page_config(
@@ -209,6 +211,7 @@ def criar_graficos_simulacao(massa_anual, cenario):
     
     fracoes = calcular_simulacao(massa_anual, cenario)
     
+    # Criar figura com subplots
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
     
     # Gráfico 1: Destinação atual vs proposta
@@ -229,11 +232,11 @@ def criar_graficos_simulacao(massa_anual, cenario):
     ax1.grid(True, alpha=0.3)
     
     # Gráfico 2: Emissões por cenário
-    cenarios = ['Atual', 'Econ. Circular', 'Otimizado']
+    cenarios_nomes = ['Atual', 'Econ. Circular', 'Otimizado']
     emissões = [massa_anual * 0.8, massa_anual * 0.4, massa_anual * 0.2]
     cores = ['#e74c3c', '#3498db', '#2ecc71']
     
-    bars = ax2.bar(cenarios, emissões, color=cores)
+    bars = ax2.bar(cenarios_nomes, emissões, color=cores)
     ax2.set_ylabel('Emissões de CO₂eq (t/ano)')
     ax2.set_title('Emissões de GEE por Cenário')
     ax2.grid(True, alpha=0.3)
@@ -280,8 +283,7 @@ def criar_graficos_simulacao(massa_anual, cenario):
 def main():
     # Sidebar com configurações
     with st.sidebar:
-        st.image("https://raw.githubusercontent.com/loopvinyl/tco2eqv7/main/logo_sinisa.png", 
-                 width=200, caption="SINISA 2023")
+        st.markdown("### SINISA 2023")
         
         st.header("⚙️ Configurações")
         
@@ -493,13 +495,16 @@ def main():
     if 'Estado' in colunas and 'Massa_Total' in colunas:
         st.header("📈 Análise Comparativa por Estado")
         
-        # Preparar dados
+        # Preparar dados - CORREÇÃO AQUI
+        # Após groupby, a coluna de Estado se torna o índice
         dados_estado = df.groupby(colunas['Estado']).agg(
             Municipios=(colunas['Massa_Total'], 'count'),
             Massa_Total=(colunas['Massa_Total'], 'sum'),
             Massa_Media=(colunas['Massa_Total'], 'mean')
-        ).reset_index()
+        ).reset_index()  # reset_index faz a coluna de grupo virar coluna novamente
         
+        # Renomear a coluna para facilitar
+        dados_estado = dados_estado.rename(columns={colunas['Estado']: 'Estado'})
         dados_estado = dados_estado.sort_values('Massa_Total', ascending=False)
         
         # Layout para gráfico e tabela
@@ -511,7 +516,7 @@ def main():
             fig, ax = plt.subplots(figsize=(10, 6))
             top_10 = dados_estado.head(10)
             
-            bars = ax.barh(top_10[colunas['Estado']], top_10['Massa_Total'], color='#3498db')
+            bars = ax.barh(top_10['Estado'], top_10['Massa_Total'], color='#3498db')
             ax.set_xlabel('Massa Total Coletada (toneladas)')
             ax.set_title('Top 10 Estados por Massa de Resíduos Coletados')
             ax.invert_yaxis()
@@ -528,12 +533,25 @@ def main():
         with col_tab:
             st.subheader("📋 Ranking Completo")
             
-            # Tabela simplificada
+            # Tabela simplificada - CORREÇÃO AQUI
+            # Usar os nomes corretos das colunas
             tabela_resumo = dados_estado[['Estado', 'Massa_Total', 'Municipios']].copy()
             tabela_resumo.columns = ['Estado', 'Massa (t)', 'Municípios']
             tabela_resumo['Massa (t)'] = tabela_resumo['Massa (t)'].round(0)
             
-            st.dataframe(tabela_resumo.head(15), height=400)
+            st.dataframe(tabela_resumo.head(15), height=400, use_container_width=True)
+    
+    # Dados brutos (se solicitado)
+    if mostrar_dados and 'Massa_Total' in colunas:
+        with st.expander("📄 Dados Brutos (Amostra)"):
+            # Mostrar apenas colunas importantes
+            colunas_para_mostrar = []
+            for tipo, col in colunas.items():
+                if col in df.columns:
+                    colunas_para_mostrar.append(col)
+            
+            if colunas_para_mostrar:
+                st.dataframe(df[colunas_para_mostrar].head(20), use_container_width=True)
     
     # Seção de informações técnicas
     with st.expander("📚 Informações Técnicas e Metodologia"):
@@ -552,7 +570,7 @@ def main():
         - Estado: Coluna D (Col_3)
         - Região: Coluna E (Col_4)
         - Tipo de Coleta: Coluna R (Col_17)
-        - Massa Total: Coluna Y (Col_24)
+        - Massa Total: Coluna Y (Col_24) - "Massa de resíduos sólidos total coletada para a rota cadastrada"
         - Destino: Coluna AC (Col_28)
         
         **Cálculo per capita:**
@@ -593,7 +611,7 @@ def main():
     st.markdown("""
     <div style='text-align: center'>
         <p>Desenvolvido para análise de dados SINISA 2023 | Dados: Sistema Nacional de Informações sobre Saneamento</p>
-        <p>Última atualização: Janeiro 2026 | Versão 2.0</p>
+        <p>Última atualização: Janeiro 2026 | Versão 2.1</p>
     </div>
     """, unsafe_allow_html=True)
 
