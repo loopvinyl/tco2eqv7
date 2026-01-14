@@ -623,17 +623,20 @@ def main():
             # Mostrar tabela detalhada original se houver múltiplos registros
             if len(dados_municipio_completo) > 1:
                 with st.expander("📋 Ver todos os registros do município (detalhado)"):
-                    # Selecionar colunas importantes para mostrar
+                    # Selecionar colunas importantes para mostrar - GARANTINDO COLUNAS ÚNICAS
                     colunas_para_mostrar = []
+                    colunas_ja_adicionadas = set()
+                    
                     for tipo, col in colunas.items():
-                        if col in dados_municipio_completo.columns:
+                        if col in dados_municipio_completo.columns and col not in colunas_ja_adicionadas:
                             colunas_para_mostrar.append(col)
+                            colunas_ja_adicionadas.add(col)
                     
                     # Adicionar índice
                     dados_display = dados_municipio_completo[colunas_para_mostrar].copy()
                     dados_display.insert(0, 'Nº', range(1, len(dados_display) + 1))
                     
-                    # Formatar colunas numéricas no padrão brasileiro - CORREÇÃO DO ERRO
+                    # Formatar colunas numéricas no padrão brasileiro
                     for col in dados_display.columns:
                         if col == 'Nº':  # Pular a coluna de índice
                             continue
@@ -767,11 +770,14 @@ def main():
     # Dados brutos (se solicitado)
     if mostrar_dados and 'Massa_Total' in colunas:
         with st.expander("📄 Dados Brutos (Amostra)"):
-            # Mostrar apenas colunas importantes
+            # Mostrar apenas colunas importantes - GARANTINDO COLUNAS ÚNICAS
             colunas_para_mostrar = []
+            colunas_ja_adicionadas = set()
+            
             for tipo, col in colunas.items():
-                if col in df.columns:
+                if col in df.columns and col not in colunas_ja_adicionadas:
                     colunas_para_mostrar.append(col)
+                    colunas_ja_adicionadas.add(col)
             
             if colunas_para_mostrar:
                 dados_amostra = df[colunas_para_mostrar].head(20).copy()
