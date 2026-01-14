@@ -32,22 +32,6 @@ MAPEAMENTO_DESTINOS = {
     'outros_codigos': {}  # Pode ser expandido conforme necessário
 }
 
-# Classificação dos destinos - ATUALIZADA COM NOVOS TIPOS
-CLASSIFICACAO_DESTINOS = {
-    'Destinação Adequada': [
-        'aterro sanitário', 'compostagem', 'reciclagem', 'triagem',
-        'unidade de triagem', 'aterro sanitario', 'usina de triagem',
-        'unidade de manejo de resíduos de áreas verdes', 'galhadas e podas',
-        'áreas verdes', 'manejo de resíduos de áreas verdes'
-    ],
-    'Destinação a Melhorar': [
-        'aterro controlado', 'lixão', 'lixao', 'aterro'
-    ],
-    'Outros Destinos': [
-        # Outros tipos que não se enquadram nas categorias acima
-    ]
-}
-
 @st.cache_data(ttl=3600)
 def carregar_dados_completos():
     """
@@ -104,11 +88,12 @@ def identificar_colunas_principais(df):
     """
     colunas = {}
     
-    # Mapeamento baseado no relatório
+    # Mapeamento baseado no relatório - ATUALIZADO COM POPULAÇÃO (Coluna J)
     mapeamento = {
         'Município': ['município', 'municipio', 'cidade', 'local', 'nome_municipio', 'localidade'],
         'Estado': ['col_3', 'estado', 'uf', 'unidade da federação'],
         'Região': ['col_4', 'região', 'regiao', 'grande região'],
+        'População': ['col_9', 'população', 'populacao', 'habitantes', 'hab', 'pop', 'população municipal'],
         'Tipo_Coleta': ['col_17', 'tipo de coleta', 'tipo_coleta', 'modalidade_coleta'],
         'Massa_Total': ['col_24', 'massa', 'total coletada', 'toneladas', 'peso', 'quantidade'],
         'Destino': ['col_28', 'destino', 'destinação', 'destinacao_final', 'destino_final']
@@ -131,6 +116,8 @@ def identificar_colunas_principais(df):
             colunas[tipo] = df.columns[3]  # Coluna D
         elif not encontrada and tipo == 'Região' and len(df.columns) > 4:
             colunas[tipo] = df.columns[4]  # Coluna E
+        elif not encontrada and tipo == 'População' and len(df.columns) > 9:
+            colunas[tipo] = df.columns[9]  # Coluna J
         elif not encontrada and tipo == 'Tipo_Coleta' and len(df.columns) > 17:
             colunas[tipo] = df.columns[17]  # Coluna R
         elif not encontrada and tipo == 'Massa_Total' and len(df.columns) > 24:
@@ -209,33 +196,6 @@ def traduzir_destino(destino):
     
     # Manter o texto original
     return destino_str
-
-def classificar_destino(destino_descricao):
-    """Classifica o destino em categorias - ATUALIZADA"""
-    if pd.isna(destino_descricao):
-        return "Não informado"
-    
-    desc_lower = str(destino_descricao).lower()
-    
-    # Verificar Destinação Adequada (NOVA: inclui manejo de áreas verdes)
-    for termo in CLASSIFICACAO_DESTINOS['Destinação Adequada']:
-        if termo in desc_lower:
-            return "Destinação Adequada"
-    
-    # Verificar Destinação a Melhorar
-    for termo in CLASSIFICACAO_DESTINOS['Destinação a Melhorar']:
-        if termo in desc_lower:
-            return "Destinação a Melhorar"
-    
-    # Classificação baseada em padrões específicos
-    if any(term in desc_lower for term in ['triagem', 'compostagem', 'reciclagem', 'usina', 'galpão']):
-        return "Destinação Adequada"
-    elif any(term in desc_lower for term in ['aterro controlado', 'lixão', 'lixao', 'aterro']):
-        return "Destinação a Melhorar"
-    elif any(term in desc_lower for term in ['manejo', 'áreas verdes', 'galhadas', 'podas']):
-        return "Destinação Adequada"  # NOVO: Manejo de áreas verdes é adequado
-    else:
-        return "Outros Destinos"
 
 def calcular_simulacao(massa_anual, cenario):
     """Calcula a simulação de cenários de destinação de resíduos"""
@@ -476,7 +436,7 @@ def main():
                             for tipo in tipos_coleta:
                                 st.markdown(f"- {tipo}")
                     
-                    # Destinos Finais (AGORA COM CONTAGEM CORRETA)
+                    # Destinos Finais - APENAS LISTAR, SEM CLASSIFICAÇÃO
                     if 'Destino' in colunas:
                         # Obter todos os destinos (incluindo duplicatas para contagem)
                         destinos_series = dados_municipio_completo[colunas['Destino']].dropna()
@@ -487,14 +447,7 @@ def main():
                             # Contar ocorrências de cada destino
                             contador_destinos = Counter(destinos_series.astype(str))
                             
-                            # Contadores para estatísticas
-                            contagem_tipos = {
-                                "Destinação Adequada": 0,
-                                "Destinação a Melhorar": 0,
-                                "Outros Destinos": 0
-                            }
-                            
-                            # Agrupar destinos similares
+                            # Agrupar destinos similares (com tradução)
                             destinos_agrupados = {}
                             for destino, count in contador_destinos.items():
                                 destino_traduzido = traduzir_destino(destino)
@@ -503,65 +456,12 @@ def main():
                                 else:
                                     destinos_agrupados[destino_traduzido] = count
                             
-                            # Exibir cada destino com contagem
+                            # Exibir cada destino com contagem (sem classificação)
                             for destino_traduzido, count in destinos_agrupados.items():
-                                # Classificar o destino
-                                classificacao = classificar_destino(destino_traduzido)
-                                contagem_tipos[classificacao] = contagem_tipos.get(classificacao, 0) + count
-                                
-                                # Determinar ícone e cor baseado na classificação
-                                if classificacao == "Destinação Adequada":
-                                    icone = "✅"
-                                    cor = "green"
-                                elif classificacao == "Destinação a Melhorar":
-                                    icone = "⚠️"
-                                    cor = "orange"
-                                else:
-                                    icone = "ℹ️"
-                                    cor = "blue"
-                                
-                                # Exibir destino com formatação e contagem
                                 if count > 1:
-                                    st.markdown(f"- {icone} **{destino_traduzido}** (×{count})")
+                                    st.markdown(f"- **{destino_traduzido}** (aparece {count} vezes)")
                                 else:
-                                    st.markdown(f"- {icone} **{destino_traduzido}**")
-                                st.markdown(f"  <span style='color:{cor}; font-size:0.9em'>{classificacao}</span>", 
-                                          unsafe_allow_html=True)
-                            
-                            # Exibir estatísticas de classificação
-                            st.markdown("---")
-                            st.subheader("📊 Estatísticas de Destinação")
-                            
-                            # Calcular totais
-                            total_destinos = sum(contador_destinos.values())
-                            
-                            col_stat1, col_stat2, col_stat3 = st.columns(3)
-                            with col_stat1:
-                                if total_destinos > 0:
-                                    percentual = (contagem_tipos['Destinação Adequada'] / total_destinos * 100)
-                                else:
-                                    percentual = 0
-                                st.metric("Destinação Adequada", 
-                                         f"{contagem_tipos['Destinação Adequada']}",
-                                         f"{percentual:.1f}%")
-                            
-                            with col_stat2:
-                                if total_destinos > 0:
-                                    percentual = (contagem_tipos['Destinação a Melhorar'] / total_destinos * 100)
-                                else:
-                                    percentual = 0
-                                st.metric("Destinação a Melhorar", 
-                                         f"{contagem_tipos['Destinação a Melhorar']}",
-                                         f"{percentual:.1f}%")
-                            
-                            with col_stat3:
-                                if total_destinos > 0:
-                                    percentual = (contagem_tipos['Outros Destinos'] / total_destinos * 100)
-                                else:
-                                    percentual = 0
-                                st.metric("Outros Destinos", 
-                                         f"{contagem_tipos['Outros Destinos']}",
-                                         f"{percentual:.1f}%")
+                                    st.markdown(f"- **{destino_traduzido}**")
             
             with col_info2:
                 st.subheader("📊 Dados Quantitativos")
@@ -571,13 +471,30 @@ def main():
                     massa_total_municipio = dados_municipio_completo[colunas['Massa_Total']].sum()
                     
                     if pd.notna(massa_total_municipio) and massa_total_municipio > 0:
-                        # Cálculo de métricas
-                        populacao_estimada = (massa_total_municipio * 1000) / 365.21  # Usando média nacional
+                        # Obter população REAL da coluna J (primeiro valor não nulo)
+                        populacao_real = None
+                        if 'População' in colunas and colunas['População'] in dados_municipio_completo.columns:
+                            # Filtrar valores não nulos e pegar o primeiro
+                            valores_populacao = dados_municipio_completo[colunas['População']].dropna().unique()
+                            if len(valores_populacao) > 0:
+                                populacao_real = float(valores_populacao[0])
                         
                         # Exibição de métricas
                         st.metric("Massa Coletada Anual Total", f"{massa_total_municipio:,.1f} t")
-                        st.metric("População Estimada", f"{populacao_estimada:,.0f} hab")
-                        st.metric("Geração Per Capita", f"{365.21:.1f} kg/hab/ano", "Média nacional")
+                        
+                        if populacao_real and populacao_real > 0:
+                            # Usar população REAL
+                            st.metric("População Municipal", f"{populacao_real:,.0f} hab", "Dados SINISA 2023")
+                            
+                            # Calcular geração per capita REAL
+                            geracao_per_capita = (massa_total_municipio * 1000) / populacao_real
+                            st.metric("Geração Per Capita", f"{geracao_per_capita:.1f} kg/hab/ano", 
+                                     f"Média nacional: 365.2 kg/hab/ano")
+                        else:
+                            # Se não tiver população, mostrar estimativa
+                            populacao_estimada = (massa_total_municipio * 1000) / 365.21
+                            st.metric("População Estimada", f"{populacao_estimada:,.0f} hab", "Baseado na média nacional")
+                            st.metric("Geração Per Capita", f"{365.21:.1f} kg/hab/ano", "Média nacional (estimativa)")
                         
                         # Detalhamento por tipo de coleta
                         st.markdown("**Detalhamento por Tipo de Coleta:**")
@@ -638,7 +555,6 @@ def main():
                     # Adicionar coluna com destino traduzido
                     if 'Destino' in colunas:
                         dados_display['Destino_Traduzido'] = dados_display[colunas['Destino']].apply(traduzir_destino)
-                        dados_display['Classificação'] = dados_display['Destino_Traduzido'].apply(classificar_destino)
                     
                     st.dataframe(dados_display, use_container_width=True)
             
@@ -742,6 +658,7 @@ def main():
         **Colunas principais utilizadas:**
         - Estado: Coluna D (Col_3)
         - Região: Coluna E (Col_4)
+        - População: Coluna J (Col_9) - População municipal
         - Tipo de Coleta: Coluna R (Col_17)
         - Massa Total: Coluna Y (Col_24) - "Massa de resíduos sólidos total coletada para a rota cadastrada"
         - Destino: Coluna AC (Col_28)
@@ -751,18 +668,11 @@ def main():
         - 3543402: Unidade de triagem (galpão ou usina)
         - Outros códigos são exibidos como "Código XXXX (não mapeado)"
         
-        **Classificação de destinos (ATUALIZADA):**
-        - ✅ Destinação Adequada: 
-          - Aterro sanitário, compostagem, reciclagem, triagem
-          - Unidade de triagem (galpão ou usina)
-          - Unidade de manejo de resíduos de áreas verdes (galhadas e podas)
-        - ⚠️ Destinação a Melhorar: Aterro controlado, lixão
-        - ℹ️ Outros Destinos: Demais tipos de destinação
-        
         **Cálculo per capita:**
-        - Média nacional: 365,21 kg/hab/ano
-        - Fonte: SINISA 2023 com dados populacionais IBGE 2023
-        - Conversão: 1 tonelada = 1.000 kg
+        - Quando disponível: usa população real da coluna J
+        - Fórmula: (Massa Total em kg) / População = kg/hab/ano
+        - 1 tonelada = 1.000 kg
+        - Se população não disponível: usa média nacional de 365,21 kg/hab/ano para estimativa
         
         ## 🧮 Simulação de Cenários
         
@@ -788,7 +698,7 @@ def main():
         
         1. Dados auto-declarados pelos municípios
         2. Variações na qualidade do preenchimento
-        3. Estimativas populacionais baseadas em média nacional
+        3. Para municípios sem dados de população, usa estimativa baseada na média nacional
         4. Fatores de emissão médios, não específicos por tecnologia
         """)
     
@@ -797,7 +707,7 @@ def main():
     st.markdown("""
     <div style='text-align: center'>
         <p>Desenvolvido para análise de dados SINISA 2023 | Dados: Sistema Nacional de Informações sobre Saneamento</p>
-        <p>Última atualização: Janeiro 2026 | Versão 2.4</p>
+        <p>Última atualização: Janeiro 2026 | Versão 2.5</p>
     </div>
     """, unsafe_allow_html=True)
 
