@@ -109,17 +109,18 @@ def identificar_colunas_principais(df):
     """
     colunas = {}
     
-    # Mapeamento baseado no relatório - CORRIGIDO: COLUNAS AD E AE
+    # Mapeamento baseado nas colunas reais do SINISA (corrigido)
     mapeamento = {
-        'Município': ['município', 'municipio', 'cidade', 'local', 'nome_municipio', 'localidade'],
-        'Estado': ['col_3', 'estado', 'uf', 'unidade da federação'],
-        'Região': ['col_4', 'região', 'regiao', 'grande região'],
-        'População': ['col_9', 'população', 'populacao', 'habitantes', 'hab', 'pop', 'população municipal'],
-        'Tipo_Coleta': ['col_17', 'tipo de coleta', 'tipo_coleta', 'modalidade_coleta'],
-        'Massa_Total': ['col_24', 'massa', 'total coletada', 'toneladas', 'peso', 'quantidade'],
-        'Destino_Codigo': ['col_28', 'código destino', 'destino_codigo', 'cod_destino'],  # Coluna AC
-        'Destino_Texto': ['col_29', 'destino texto', 'destino_descricao', 'descrição destino'],  # Coluna AD - CORRIGIDO
-        'Agente_Executor': ['col_30', 'agente executor', 'executor', 'responsável', 'responsavel']  # Coluna AE - CORRIGIDO
+        'Município': ['município', 'municipio', 'cidade', 'local', 'nom_mun', 'localidade'],
+        'Estado': ['uf', 'estado', 'unidade da federação'],
+        'Região': ['região', 'regiao', 'nom_região', 'grande região', 'macrorregião'],
+        'População': ['população', 'populacao', 'habitantes', 'hab', 'pop', 'dfe0001', 'população total'],
+        'Tipo_Coleta': ['tipo de coleta executada', 'tipo_coleta', 'modalidade_coleta', 'gtr1001'],
+        'Massa_Total': ['massa de resíduos sólidos total coletada', 'massa total', 'toneladas', 'gtr1008'],
+        'Destino_Codigo': ['tipo de unidade de destino', 'código destino', 'destino_codigo', 'gtr1011'],
+        'Destino_Texto': ['tipo de unidade de destino', 'destino texto', 'destino_descricao', 'gtr1011'],
+        'Agente_Executor': ['tipo de executor do serviço de destino dos resíduos', 'agente executor', 'executor', 'gtr1012'],
+        'Secretaria': ['secretaria', 'setor responsável', 'cad1001', 'secretaria ou setor responsável']
     }
     
     for tipo, padroes in mapeamento.items():
@@ -133,36 +134,31 @@ def identificar_colunas_principais(df):
                     break
             if encontrada:
                 break
-        
-        # Se não encontrou pelo nome, usar índice conhecido
-        if not encontrada and tipo == 'Estado' and len(df.columns) > 3:
-            colunas[tipo] = df.columns[3]  # Coluna D
-        elif not encontrada and tipo == 'Região' and len(df.columns) > 4:
-            colunas[tipo] = df.columns[4]  # Coluna E
-        elif not encontrada and tipo == 'População' and len(df.columns) > 9:
-            colunas[tipo] = df.columns[9]  # Coluna J
-        elif not encontrada and tipo == 'Tipo_Coleta' and len(df.columns) > 17:
-            colunas[tipo] = df.columns[17]  # Coluna R
-        elif not encontrada and tipo == 'Massa_Total' and len(df.columns) > 24:
-            colunas[tipo] = df.columns[24]  # Coluna Y
-        elif not encontrada and tipo == 'Destino_Codigo' and len(df.columns) > 28:
-            colunas[tipo] = df.columns[28]  # Coluna AC
-        elif not encontrada and tipo == 'Destino_Texto' and len(df.columns) > 29:
-            colunas[tipo] = df.columns[29]  # Coluna AD - CORRIGIDO
-        elif not encontrada and tipo == 'Agente_Executor' and len(df.columns) > 30:
-            colunas[tipo] = df.columns[30]  # Coluna AE - CORRIGIDO
     
-    # Para município, tentar encontrar por conteúdo
-    if 'Município' not in colunas:
-        for col in df.columns:
-            # Verificar se a coluna tem valores que parecem nomes de municípios
-            try:
-                amostra = df[col].dropna().astype(str).head(10).str.lower()
-                if any('ribeirão' in v or 'são' in v or 'rio' in v for v in amostra):
-                    colunas['Município'] = col
-                    break
-            except:
-                continue
+    # Fallback para colunas por índice se não encontrou por nome
+    if 'Município' not in colunas and len(df.columns) > 2:
+        # Tentar identificar por conteúdo
+        for i, col in enumerate(df.columns):
+            if i == 2:  # Provável coluna de município
+                colunas['Município'] = col
+                break
+    
+    if 'Estado' not in colunas and len(df.columns) > 3:
+        colunas['Estado'] = df.columns[3]
+    if 'Região' not in colunas and len(df.columns) > 4:
+        colunas['Região'] = df.columns[4]
+    if 'População' not in colunas and len(df.columns) > 9:
+        colunas['População'] = df.columns[9]
+    if 'Tipo_Coleta' not in colunas and len(df.columns) > 16:
+        colunas['Tipo_Coleta'] = df.columns[16]
+    if 'Massa_Total' not in colunas and len(df.columns) > 24:
+        colunas['Massa_Total'] = df.columns[24]
+    if 'Destino_Texto' not in colunas and len(df.columns) > 28:
+        colunas['Destino_Texto'] = df.columns[28]
+    if 'Agente_Executor' not in colunas and len(df.columns) > 29:
+        colunas['Agente_Executor'] = df.columns[29]
+    if 'Secretaria' not in colunas and len(df.columns) > 6:
+        colunas['Secretaria'] = df.columns[6]
     
     return colunas
 
@@ -457,6 +453,12 @@ def main():
                     if 'Região' in colunas and colunas['Região'] in primeiro_registro:
                         st.markdown(f"**Região:** {primeiro_registro[colunas['Região']]}")
                     
+                    # Secretaria/Setor
+                    if 'Secretaria' in colunas and colunas['Secretaria'] in primeiro_registro:
+                        secretaria = primeiro_registro[colunas['Secretaria']]
+                        if pd.notna(secretaria):
+                            st.markdown(f"**Secretaria/Setor:** {secretaria}")
+                    
                     # Tipos de Coleta (mostrar todos)
                     if 'Tipo_Coleta' in colunas:
                         tipos_coleta = dados_municipio_completo[colunas['Tipo_Coleta']].dropna().unique()
@@ -568,28 +570,47 @@ def main():
                 else:
                     st.error("Coluna de massa não identificada.")
             
-            # TABELA DE RELAÇÃO ENTRE TIPO DE COLETA, DESTINO E AGENTE EXECUTOR
-            st.subheader("📋 Relação: Tipo de Coleta → Destino Final → Agente Executor")
+            # DEBUG: Verificar mapeamento
+            if modo_detalhado:
+                with st.expander("🔍 Debug - Verificar Mapeamento de Colunas"):
+                    st.write("Colunas mapeadas:")
+                    for tipo, col in colunas.items():
+                        st.write(f"**{tipo}**: {col}")
+                    
+                    if len(dados_municipio_completo) > 0:
+                        st.write("\n**Primeiro registro completo:**")
+                        primeiro_registro = dados_municipio_completo.iloc[0]
+                        
+                        # Mostrar apenas as colunas mapeadas
+                        for tipo, col in colunas.items():
+                            if col in primeiro_registro:
+                                st.write(f"**{tipo} ({col})**: {primeiro_registro[col]}")
+            
+            # TABELA DE RELAÇÃO ENTRE TIPO DE COLETA, DESTINO E AGENTE EXECUTOR - CORRIGIDA
+            st.subheader("📋 Relação: Tipo de Coleta → Destino Final → Agente Executor → Secretaria")
             
             # Criar tabela simplificada
             tabela_relacao = []
             
             for i, linha in dados_municipio_completo.iterrows():
-                # Coletar informações
+                # Coletar informações CORRETAS
                 tipo_coleta = linha[colunas['Tipo_Coleta']] if 'Tipo_Coleta' in colunas and colunas['Tipo_Coleta'] in linha else "Não informado"
                 destino = linha[colunas['Destino_Texto']] if 'Destino_Texto' in colunas and colunas['Destino_Texto'] in linha else "Não informado"
                 agente = linha[colunas['Agente_Executor']] if 'Agente_Executor' in colunas and colunas['Agente_Executor'] in linha else "Não informado"
+                secretaria = linha[colunas['Secretaria']] if 'Secretaria' in colunas and colunas['Secretaria'] in linha else "Não informado"
                 massa = linha[colunas['Massa_Total']] if 'Massa_Total' in colunas and colunas['Massa_Total'] in linha else 0
                 
                 # Limpar textos
                 tipo_coleta = str(tipo_coleta).strip() if pd.notna(tipo_coleta) else "Não informado"
                 destino = str(destino).strip() if pd.notna(destino) else "Não informado"
                 agente = str(agente).strip() if pd.notna(agente) else "Não informado"
+                secretaria = str(secretaria).strip() if pd.notna(secretaria) else "Não informado"
                 
                 tabela_relacao.append({
                     'Tipo de Coleta': tipo_coleta,
                     'Destino Final': destino,
                     'Agente Executor': agente,
+                    'Secretaria/Setor': secretaria,
                     'Massa (t)': formatar_br(massa, 1) if pd.notna(massa) else "0,0"
                 })
             
@@ -752,11 +773,11 @@ def main():
         - Estado: Coluna D (Col_3)
         - Região: Coluna E (Col_4)
         - População: Coluna J (Col_9) - População municipal
-        - Tipo de Coleta: Coluna R (Col_17) - Tipos de coleta de resíduos
+        - Tipo de Coleta: Coluna Q (Col_16) - "Tipo de coleta executada"
         - Massa Total: Coluna Y (Col_24) - "Massa de resíduos sólidos total coletada para a rota cadastrada"
-        - Destino (Código): Coluna AC (Col_28) - Código do destino final
-        - Destino (Texto): Coluna AD (Col_29) - Descrição do destino final
-        - Agente Executor: Coluna AE (Col_30) - Responsável pela destinação
+        - Destino (Texto): Coluna AD (Col_28) - "Tipo de unidade de destino" (ex: Aterro controlado)
+        - Agente Executor: Coluna AE (Col_29) - "Tipo de executor do serviço de destino dos resíduos" (ex: Agente privado)
+        - Secretaria/Setor: Coluna G (Col_6) - "Secretaria ou setor responsável"
         
         **Cálculo per capita:**
         - Quando disponível: usa população real da coluna J
