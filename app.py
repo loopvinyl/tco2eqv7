@@ -136,38 +136,37 @@ def normalizar_texto(texto):
     texto = unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
     return texto.lower().strip()
 
-def buscar_municipio_eficiente(df, municipio_nome, coluna_municipio):
-    """Busca eficiente de município com múltiplas estratégias"""
+def buscar_todas_linhas_municipio(df, municipio_nome, coluna_municipio):
+    """Busca TODAS as linhas de um município"""
     if coluna_municipio not in df.columns:
         return None
     
     # Normalizar nome do município buscado
     municipio_busca = normalizar_texto(municipio_nome)
     
-    # Estratégia 1: Busca exata
+    # Normalizar coluna para busca
     df_temp = df.copy()
     df_temp['_temp_norm'] = df_temp[coluna_municipio].apply(normalizar_texto)
+    
+    # Buscar exato primeiro
     mask_exato = df_temp['_temp_norm'] == municipio_busca
     
-    if mask_exato.any():
-        return df_temp[mask_exato].iloc[0]
+    # Se não encontrou exato, buscar por partes
+    if not mask_exato.any():
+        partes = [p for p in municipio_busca.split() if len(p) > 2]
+        if len(partes) > 1:
+            mask_parte = pd.Series(True, index=df_temp.index)
+            for parte in partes:
+                mask_parte = mask_parte & df_temp['_temp_norm'].str.contains(parte, na=False)
+            mask = mask_parte
+        else:
+            mask = df_temp['_temp_norm'].str.contains(municipio_busca[:5], na=False)
+    else:
+        mask = mask_exato
     
-    # Estratégia 2: Busca por partes (para nomes compostos)
-    partes = [p for p in municipio_busca.split() if len(p) > 2]
-    if len(partes) > 1:
-        mask_parte = pd.Series(True, index=df_temp.index)
-        for parte in partes:
-            mask_parte = mask_parte & df_temp['_temp_norm'].str.contains(parte, na=False)
-        
-        if mask_parte.any():
-            return df_temp[mask_parte].iloc[0]
+    resultados = df_temp[mask].copy()
     
-    # Estratégia 3: Busca flexível
-    mask_flex = df_temp['_temp_norm'].str.contains(municipio_busca[:5], na=False)
-    if mask_flex.any():
-        return df_temp[mask_flex].iloc[0]
-    
-    return None
+    return resultados
 
 def calcular_simulacao(massa_anual, cenario):
     """Calcula a simulação de cenários de destinação de resíduos"""
@@ -375,11 +374,11 @@ def main():
     st.header(f"🏙️ Análise Municipal: {municipio_selecionado}")
     
     if 'Município' in colunas:
-        # Buscar município
-        dados_municipio = buscar_municipio_eficiente(df, municipio_selecionado, colunas['Município'])
+        # Buscar TODAS as linhas do município
+        dados_municipio_completo = buscar_todas_linhas_municipio(df, municipio_selecionado, colunas['Município'])
         
-        if dados_municipio is not None:
-            st.success(f"✅ Município encontrado nos dados SINISA!")
+        if dados_municipio_completo is not None and len(dados_municipio_completo) > 0:
+            st.success(f"✅ Município encontrado! {len(dados_municipio_completo)} registro(s) no total.")
             
             # Layout em colunas para informações
             col_info1, col_info2 = st.columns(2)
@@ -389,68 +388,91 @@ def main():
                 
                 info_card = st.container()
                 with info_card:
-                    # Município
-                    st.markdown(f"**Município:** {dados_municipio[colunas['Município']]}")
+                    # Município (usar o primeiro registro)
+                    primeiro_registro = dados_municipio_completo.iloc[0]
+                    st.markdown(f"**Município:** {primeiro_registro[colunas['Município']]}")
                     
                     # Estado e Região
-                    if 'Estado' in colunas and colunas['Estado'] in dados_municipio:
-                        st.markdown(f"**Estado:** {dados_municipio[colunas['Estado']]}")
+                    if 'Estado' in colunas and colunas['Estado'] in primeiro_registro:
+                        st.markdown(f"**Estado:** {primeiro_registro[colunas['Estado']]}")
                     
-                    if 'Região' in colunas and colunas['Região'] in dados_municipio:
-                        st.markdown(f"**Região:** {dados_municipio[colunas['Região']]}")
+                    if 'Região' in colunas and colunas['Região'] in primeiro_registro:
+                        st.markdown(f"**Região:** {primeiro_registro[colunas['Região']]}")
                     
-                    # Tipo de Coleta
-                    if 'Tipo_Coleta' in colunas and colunas['Tipo_Coleta'] in dados_municipio:
-                        coleta = dados_municipio[colunas['Tipo_Coleta']]
-                        st.markdown(f"**Tipo de Coleta:** {coleta}")
+                    # Tipos de Coleta (mostrar todos)
+                    if 'Tipo_Coleta' in colunas:
+                        tipos_coleta = dados_municipio_completo[colunas['Tipo_Coleta']].dropna().unique()
+                        if len(tipos_coleta) > 0:
+                            st.markdown("**Tipos de Coleta:**")
+                            for tipo in tipos_coleta:
+                                st.markdown(f"- {tipo}")
                     
-                    # Destino Final
-                    if 'Destino' in colunas and colunas['Destino'] in dados_municipio:
-                        destino = dados_municipio[colunas['Destino']]
-                        st.markdown(f"**Destino Final:** {destino}")
-                        
-                        # Classificação do destino
-                        if pd.notna(destino):
-                            destinos_adequados = ['ATERRO SANITÁRIO', 'COMPOSTAGEM', 'RECICLAGEM', 'TRIAGEM']
-                            if any(term in str(destino).upper() for term in destinos_adequados):
-                                st.success("✅ Destinação adequada")
-                            else:
-                                st.warning("⚠️ Verificar adequação da destinação")
+                    # Destinos Finais (mostrar todos)
+                    if 'Destino' in colunas:
+                        destinos = dados_municipio_completo[colunas['Destino']].dropna().unique()
+                        if len(destinos) > 0:
+                            st.markdown("**Destinos Finais:**")
+                            for destino in destinos:
+                                # Verificar se é numérico (código) ou texto
+                                if str(destino).isdigit():
+                                    st.markdown(f"- Código: {destino} (verificar significado)")
+                                else:
+                                    st.markdown(f"- {destino}")
+                                    
+                                    # Classificar destino
+                                    if any(term in str(destino).upper() for term in ['ATERRO SANITÁRIO', 'COMPOSTAGEM', 'RECICLAGEM', 'TRIAGEM']):
+                                        st.success("  ✅ Destinação adequada")
+                                    elif any(term in str(destino).upper() for term in ['ATERRO CONTROLADO', 'LIXÃO']):
+                                        st.warning("  ⚠️ Destinação a melhorar")
+                                    else:
+                                        st.info("  ℹ️ Outro tipo de destinação")
             
             with col_info2:
                 st.subheader("📊 Dados Quantitativos")
                 
-                if 'Massa_Total' in colunas and colunas['Massa_Total'] in dados_municipio:
-                    massa = dados_municipio[colunas['Massa_Total']]
+                if 'Massa_Total' in colunas:
+                    # Soma a massa total de todas as linhas do município
+                    massa_total_municipio = dados_municipio_completo[colunas['Massa_Total']].sum()
                     
-                    if pd.notna(massa) and massa > 0:
+                    if pd.notna(massa_total_municipio) and massa_total_municipio > 0:
                         # Cálculo de métricas
-                        populacao_estimada = (massa * 1000) / 365.21  # Usando média nacional
+                        populacao_estimada = (massa_total_municipio * 1000) / 365.21  # Usando média nacional
                         
                         # Exibição de métricas
-                        st.metric("Massa Coletada Anual", f"{massa:,.1f} t")
+                        st.metric("Massa Coletada Anual Total", f"{massa_total_municipio:,.1f} t")
                         st.metric("População Estimada", f"{populacao_estimada:,.0f} hab")
                         st.metric("Geração Per Capita", f"{365.21:.1f} kg/hab/ano", "Média nacional")
+                        
+                        # Detalhamento por tipo de coleta
+                        st.markdown("**Detalhamento por Tipo de Coleta:**")
+                        if 'Tipo_Coleta' in colunas:
+                            detalhes_coleta = dados_municipio_completo.groupby(colunas['Tipo_Coleta']).agg(
+                                Massa_Total=(colunas['Massa_Total'], 'sum'),
+                                Contagem=(colunas['Massa_Total'], 'count')
+                            ).reset_index()
+                            
+                            for _, row in detalhes_coleta.iterrows():
+                                st.markdown(f"- {row[colunas['Tipo_Coleta']]}: {row['Massa_Total']:,.1f} t")
                         
                         # Simulação de cenários
                         st.subheader("🔮 Simulação de Cenários")
                         
                         # Criar gráficos
-                        fig = criar_graficos_simulacao(massa, cenario)
+                        fig = criar_graficos_simulacao(massa_total_municipio, cenario)
                         st.pyplot(fig)
                         
                         # Detalhes da simulação
-                        fracoes = calcular_simulacao(massa, cenario)
+                        fracoes = calcular_simulacao(massa_total_municipio, cenario)
                         
                         col_res1, col_res2, col_res3 = st.columns(3)
                         
                         with col_res1:
                             st.metric("Materiais Recicláveis", 
-                                    f"{massa * fracoes['Reciclagem']:,.0f} t/ano")
+                                    f"{massa_total_municipio * fracoes['Reciclagem']:,.0f} t/ano")
                         
                         with col_res2:
                             st.metric("Compostagem", 
-                                    f"{massa * fracoes['Compostagem']:,.0f} t/ano")
+                                    f"{massa_total_municipio * fracoes['Compostagem']:,.0f} t/ano")
                         
                         with col_res3:
                             st.metric("Emissões de GEE", 
@@ -463,6 +485,22 @@ def main():
                         st.warning("Dados de massa não disponíveis ou zerados para este município.")
                 else:
                     st.error("Coluna de massa não identificada.")
+                    
+            # Mostrar tabela detalhada se houver múltiplos registros
+            if len(dados_municipio_completo) > 1:
+                with st.expander("📋 Ver todos os registros do município"):
+                    # Selecionar colunas importantes para mostrar
+                    colunas_para_mostrar = []
+                    for tipo, col in colunas.items():
+                        if col in dados_municipio_completo.columns:
+                            colunas_para_mostrar.append(col)
+                    
+                    # Adicionar índice
+                    dados_display = dados_municipio_completo[colunas_para_mostrar].copy()
+                    dados_display.insert(0, 'Nº', range(1, len(dados_display) + 1))
+                    
+                    st.dataframe(dados_display, use_container_width=True)
+            
         else:
             st.warning(f"Município '{municipio_selecionado}' não encontrado nos dados.")
             
@@ -491,13 +529,12 @@ def main():
     if 'Estado' in colunas and 'Massa_Total' in colunas:
         st.header("📈 Análise Comparativa por Estado")
         
-        # Preparar dados - CORREÇÃO AQUI
-        # Após groupby, a coluna de Estado se torna o índice
+        # Preparar dados
         dados_estado = df.groupby(colunas['Estado']).agg(
             Municipios=(colunas['Massa_Total'], 'count'),
             Massa_Total=(colunas['Massa_Total'], 'sum'),
             Massa_Media=(colunas['Massa_Total'], 'mean')
-        ).reset_index()  # reset_index faz a coluna de grupo virar coluna novamente
+        ).reset_index()
         
         # Renomear a coluna para facilitar
         dados_estado = dados_estado.rename(columns={colunas['Estado']: 'Estado'})
@@ -529,8 +566,7 @@ def main():
         with col_tab:
             st.subheader("📋 Ranking Completo")
             
-            # Tabela simplificada - CORREÇÃO AQUI
-            # Usar os nomes corretos das colunas
+            # Tabela simplificada
             tabela_resumo = dados_estado[['Estado', 'Massa_Total', 'Municipios']].copy()
             tabela_resumo.columns = ['Estado', 'Massa (t)', 'Municípios']
             tabela_resumo['Massa (t)'] = tabela_resumo['Massa (t)'].round(0)
@@ -607,7 +643,7 @@ def main():
     st.markdown("""
     <div style='text-align: center'>
         <p>Desenvolvido para análise de dados SINISA 2023 | Dados: Sistema Nacional de Informações sobre Saneamento</p>
-        <p>Última atualização: Janeiro 2026 | Versão 2.1</p>
+        <p>Última atualização: Janeiro 2026 | Versão 2.2</p>
     </div>
     """, unsafe_allow_html=True)
 
