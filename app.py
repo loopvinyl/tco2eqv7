@@ -459,29 +459,30 @@ def main():
                             for tipo in tipos_coleta:
                                 st.markdown(f"- {tipo}")
                     
-                    # Destinos Finais - MOSTRAR EXATAMENTE COMO ESTÁ NA PLANILHA
-                    if 'Destino' in colunas:
-                        # Obter todos os destinos (mantendo a ordem original)
-                        destinos_series = dados_municipio_completo[colunas['Destino']].dropna()
+                    # Destinos Finais - MOSTRAR EXATAMENTE COMO ESTÁ NA COLUNA AC
+                    if 'Destino' in colunas and colunas['Destino'] in dados_municipio_completo.columns:
+                        # Obter valores da coluna AC (Destino)
+                        destinos = dados_municipio_completo[colunas['Destino']].dropna()
                         
-                        if len(destinos_series) > 0:
+                        if len(destinos) > 0:
                             st.markdown("**Destinos Finais:**")
                             
-                            # Contar ocorrências de cada destino EXATO (sem agrupar códigos diferentes)
-                            contador_destinos = Counter(destinos_series.astype(str))
+                            # Contar ocorrências EXATAS (case sensitive)
+                            contador_destinos = Counter(destinos.astype(str))
                             
-                            # Mostrar cada destino exatamente como está, com sua contagem
-                            for destino, count in contador_destinos.items():
-                                if pd.isna(destino) or destino == "nan":
+                            # Mostrar cada destino exatamente como está na planilha
+                            for destino_texto, count in contador_destinos.items():
+                                if pd.isna(destino_texto) or destino_texto == "nan":
                                     continue
-                                    
-                                destino_str = str(destino).strip()
+                                
+                                # Limpar espaços extras
+                                destino_limpo = str(destino_texto).strip()
                                 
                                 # Mostrar com contagem apenas se for maior que 1
                                 if count > 1:
-                                    st.markdown(f"- **{destino_str}** (aparece {formatar_br(count, 0)} vezes)")
+                                    st.markdown(f"- **{destino_limpo}** (aparece {formatar_br(count, 0)} vezes)")
                                 else:
-                                    st.markdown(f"- **{destino_str}**")
+                                    st.markdown(f"- **{destino_limpo}**")
             
             with col_info2:
                 st.subheader("📊 Dados Quantitativos")
@@ -752,7 +753,7 @@ def main():
     st.markdown("""
     <div style='text-align: center'>
         <p>Desenvolvido para análise de dados SINISA 2023 | Dados: Sistema Nacional de Informações sobre Saneamento</p>
-        <p>Última atualização: Janeiro 2026 | Versão 2.7</p>
+        <p>Última atualização: Janeiro 2026 | Versão 2.8</p>
     </div>
     """, unsafe_allow_html=True)
 
