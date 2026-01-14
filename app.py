@@ -32,6 +32,52 @@ MAPEAMENTO_DESTINOS = {
     'outros_codigos': {}  # Pode ser expandido conforme necessário
 }
 
+# Função para formatar números no padrão brasileiro
+def formatar_br(numero, casas_decimais=1, sufixo=""):
+    """Formata um número no padrão brasileiro (vírgula decimal, ponto milhar)"""
+    if pd.isna(numero) or numero is None:
+        return "N/A"
+    
+    try:
+        # Converter para float se for string
+        if isinstance(numero, str):
+            numero = float(numero.replace(",", ".").replace(".", "", numero.count(".")-1))
+        
+        # Formatar com separador de milhar e vírgula decimal
+        if casas_decimais == 0:
+            formato = "{:,.0f}"
+        else:
+            formato = "{:,." + str(casas_decimais) + "f}"
+        
+        # Formatar com ponto para milhar
+        formatado = formato.format(numero)
+        
+        # Substituir vírgula por ponto temporariamente, depois ponto por vírgula
+        formatado = formatado.replace(",", "X").replace(".", ",").replace("X", ".")
+        
+        return f"{formatado}{sufixo}"
+    except:
+        return str(numero)
+
+# Função para formatar números grandes de forma legível
+def formatar_grande(numero, casas_decimais=1):
+    """Formata números grandes com sufixos K, M, B"""
+    if pd.isna(numero) or numero is None:
+        return "N/A"
+    
+    try:
+        numero = float(numero)
+        if abs(numero) >= 1_000_000_000:
+            return formatar_br(numero / 1_000_000_000, casas_decimais) + " bi"
+        elif abs(numero) >= 1_000_000:
+            return formatar_br(numero / 1_000_000, casas_decimais) + " mi"
+        elif abs(numero) >= 1_000:
+            return formatar_br(numero / 1_000, casas_decimais) + " mil"
+        else:
+            return formatar_br(numero, casas_decimais)
+    except:
+        return str(numero)
+
 @st.cache_data(ttl=3600)
 def carregar_dados_completos():
     """
@@ -240,6 +286,17 @@ def criar_graficos_simulacao(massa_anual, cenario):
     # Criar figura com subplots
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
     
+    # Configurar formatação brasileira nos gráficos
+    def formatar_br_grafico(x, p):
+        """Função para formatar números nos gráficos no padrão brasileiro"""
+        x = float(x)
+        if abs(x) >= 1_000_000:
+            return formatar_br(x / 1_000_000, 1) + ' mi'
+        elif abs(x) >= 1_000:
+            return formatar_br(x / 1_000, 1) + ' mil'
+        else:
+            return formatar_br(x, 0)
+    
     # Gráfico 1: Destinação atual vs proposta
     destinos = ['Aterro', 'Reciclagem', 'Compostagem']
     valores_atual = [0.85, 0.08, 0.07]
@@ -257,6 +314,9 @@ def criar_graficos_simulacao(massa_anual, cenario):
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
+    # Formatar eixo y como porcentagem
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.0%}'))
+    
     # Gráfico 2: Emissões por cenário
     cenarios_nomes = ['Atual', 'Econ. Circular', 'Otimizado']
     emissões = [massa_anual * 0.8, massa_anual * 0.4, massa_anual * 0.2]
@@ -267,17 +327,20 @@ def criar_graficos_simulacao(massa_anual, cenario):
     ax2.set_title('Emissões de GEE por Cenário')
     ax2.grid(True, alpha=0.3)
     
+    # Formatar eixo y no padrão brasileiro
+    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: formatar_br(y, 0)))
+    
     for bar in bars:
         height = bar.get_height()
         ax2.text(bar.get_x() + bar.get_width()/2, height,
-                f'{height:,.0f}', ha='center', va='bottom', fontweight='bold')
+                f'{formatar_br(height, 0)}', ha='center', va='bottom', fontweight='bold')
     
     # Gráfico 3: Potencial de reciclagem
     labels = ['Recicláveis Recuperáveis', 'Orgânicos Compostáveis', 'Rejeito']
     sizes = [fracoes['Reciclagem'] * 100, fracoes['Compostagem'] * 100, fracoes['Aterro'] * 100]
     colors = ['#3498db', '#2ecc71', '#e74c3c']
     
-    ax3.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+    ax3.pie(sizes, labels=labels, colors=colors, autopct=lambda p: f'{p:.1f}%', startangle=90)
     ax3.set_title(f'Potencial de Valorização - {cenario}')
     
     # Gráfico 4: Valor econômico do carbono
@@ -294,10 +357,13 @@ def criar_graficos_simulacao(massa_anual, cenario):
         ax4.set_title('Valor Econômico do Carbono Evitado')
         ax4.grid(True, alpha=0.3)
         
+        # Formatar eixo y no padrão brasileiro
+        ax4.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: formatar_br(y, 0)))
+        
         for i, (bar, val, unid) in enumerate(zip(bars, valores, unidades)):
             height = bar.get_height()
             ax4.text(bar.get_x() + bar.get_width()/2, height,
-                    f'{val:,.0f} {unid}', ha='center', va='bottom', fontweight='bold')
+                    f'{formatar_br(val, 0)} {unid}', ha='center', va='bottom', fontweight='bold')
     else:
         ax4.text(0.5, 0.5, 'Sem redução de emissões\nno cenário atual',
                 ha='center', va='center', transform=ax4.transAxes, fontsize=12)
@@ -382,22 +448,22 @@ def main():
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Registros Válidos", f"{len(df):,}", "Com 'Sim'")
+        st.metric("Registros Válidos", f"{formatar_br(len(df), 0)}", "Com 'Sim'")
     
     with col2:
         if 'Massa_Total' in colunas:
             massa_total = df[colunas['Massa_Total']].sum()
-            st.metric("Massa Total Coletada", f"{massa_total:,.0f} t", "Nacional")
+            st.metric("Massa Total Coletada", f"{formatar_br(massa_total, 0)} t", "Nacional")
     
     with col3:
         if 'Estado' in colunas:
             estados = df[colunas['Estado']].nunique()
-            st.metric("Estados", estados, "Com dados")
+            st.metric("Estados", f"{formatar_br(estados, 0)}", "Com dados")
     
     with col4:
         if 'Região' in colunas:
             regioes = df[colunas['Região']].nunique()
-            st.metric("Regiões", regioes, "Brasil")
+            st.metric("Regiões", f"{formatar_br(regioes, 0)}", "Brasil")
     
     # Análise do município selecionado
     st.header(f"🏙️ Análise Municipal: {municipio_selecionado}")
@@ -407,7 +473,7 @@ def main():
         dados_municipio_completo = buscar_todas_linhas_municipio(df, municipio_selecionado, colunas['Município'])
         
         if dados_municipio_completo is not None and len(dados_municipio_completo) > 0:
-            st.success(f"✅ Município encontrado! {len(dados_municipio_completo)} registro(s) no total.")
+            st.success(f"✅ Município encontrado! {formatar_br(len(dados_municipio_completo), 0)} registro(s) no total.")
             
             # Layout em colunas para informações
             col_info1, col_info2 = st.columns(2)
@@ -459,7 +525,7 @@ def main():
                             # Exibir cada destino com contagem (sem classificação)
                             for destino_traduzido, count in destinos_agrupados.items():
                                 if count > 1:
-                                    st.markdown(f"- **{destino_traduzido}** (aparece {count} vezes)")
+                                    st.markdown(f"- **{destino_traduzido}** (aparece {formatar_br(count, 0)} vezes)")
                                 else:
                                     st.markdown(f"- **{destino_traduzido}**")
             
@@ -479,22 +545,22 @@ def main():
                             if len(valores_populacao) > 0:
                                 populacao_real = float(valores_populacao[0])
                         
-                        # Exibição de métricas
-                        st.metric("Massa Coletada Anual Total", f"{massa_total_municipio:,.1f} t")
+                        # Exibição de métricas com formatação brasileira
+                        st.metric("Massa Coletada Anual Total", f"{formatar_br(massa_total_municipio, 1)} t")
                         
                         if populacao_real and populacao_real > 0:
                             # Usar população REAL
-                            st.metric("População Municipal", f"{populacao_real:,.0f} hab", "Dados SINISA 2023")
+                            st.metric("População Municipal", f"{formatar_br(populacao_real, 0)} hab", "Dados SINISA 2023")
                             
                             # Calcular geração per capita REAL
                             geracao_per_capita = (massa_total_municipio * 1000) / populacao_real
-                            st.metric("Geração Per Capita", f"{geracao_per_capita:.1f} kg/hab/ano", 
-                                     f"Média nacional: 365.2 kg/hab/ano")
+                            st.metric("Geração Per Capita", f"{formatar_br(geracao_per_capita, 1)} kg/hab/ano", 
+                                     f"Média nacional: {formatar_br(365.21, 1)} kg/hab/ano")
                         else:
                             # Se não tiver população, mostrar estimativa
                             populacao_estimada = (massa_total_municipio * 1000) / 365.21
-                            st.metric("População Estimada", f"{populacao_estimada:,.0f} hab", "Baseado na média nacional")
-                            st.metric("Geração Per Capita", f"{365.21:.1f} kg/hab/ano", "Média nacional (estimativa)")
+                            st.metric("População Estimada", f"{formatar_br(populacao_estimada, 0)} hab", "Baseado na média nacional")
+                            st.metric("Geração Per Capita", f"{formatar_br(365.21, 1)} kg/hab/ano", "Média nacional (estimativa)")
                         
                         # Detalhamento por tipo de coleta
                         st.markdown("**Detalhamento por Tipo de Coleta:**")
@@ -505,7 +571,7 @@ def main():
                             ).reset_index()
                             
                             for _, row in detalhes_coleta.iterrows():
-                                st.markdown(f"- {row[colunas['Tipo_Coleta']]}: {row['Massa_Total']:,.1f} t")
+                                st.markdown(f"- {row[colunas['Tipo_Coleta']]}: {formatar_br(row['Massa_Total'], 1)} t")
                         
                         # Simulação de cenários
                         st.subheader("🔮 Simulação de Cenários")
@@ -520,16 +586,18 @@ def main():
                         col_res1, col_res2, col_res3 = st.columns(3)
                         
                         with col_res1:
+                            materiais_reciclaveis = massa_total_municipio * fracoes['Reciclagem']
                             st.metric("Materiais Recicláveis", 
-                                    f"{massa_total_municipio * fracoes['Reciclagem']:,.0f} t/ano")
+                                    f"{formatar_br(materiais_reciclaveis, 0)} t/ano")
                         
                         with col_res2:
+                            compostagem = massa_total_municipio * fracoes['Compostagem']
                             st.metric("Compostagem", 
-                                    f"{massa_total_municipio * fracoes['Compostagem']:,.0f} t/ano")
+                                    f"{formatar_br(compostagem, 0)} t/ano")
                         
                         with col_res3:
                             st.metric("Emissões de GEE", 
-                                    f"{fracoes['Emissões (t CO₂eq)']:,.0f} t CO₂eq/ano")
+                                    f"{formatar_br(fracoes['Emissões (t CO₂eq)'], 0)} t CO₂eq/ano")
                         
                         # Valor econômico se houver redução
                         if fracoes['Redução vs Atual'] != '0%':
@@ -555,6 +623,15 @@ def main():
                     # Adicionar coluna com destino traduzido
                     if 'Destino' in colunas:
                         dados_display['Destino_Traduzido'] = dados_display[colunas['Destino']].apply(traduzir_destino)
+                    
+                    # Formatar colunas numéricas no padrão brasileiro
+                    for col in dados_display.columns:
+                        if dados_display[col].dtype in [np.int64, np.float64]:
+                            # Verificar se é uma coluna de população ou massa para formatação apropriada
+                            if 'População' in str(col) or 'pop' in str(col).lower():
+                                dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
+                            elif 'Massa' in str(col) or 'massa' in str(col).lower():
+                                dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 1) if pd.notna(x) else x)
                     
                     st.dataframe(dados_display, use_container_width=True)
             
@@ -612,11 +689,14 @@ def main():
             ax.invert_yaxis()
             ax.grid(axis='x', alpha=0.3)
             
-            # Adicionar valores
+            # Formatar eixo x no padrão brasileiro
+            ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: formatar_br(x, 0)))
+            
+            # Adicionar valores formatados no padrão brasileiro
             for bar in bars:
                 width = bar.get_width()
                 ax.text(width, bar.get_y() + bar.get_height()/2,
-                       f'{width:,.0f}', ha='left', va='center', fontsize=9)
+                       f'{formatar_br(width, 0)}', ha='left', va='center', fontsize=9)
             
             st.pyplot(fig)
         
@@ -627,6 +707,10 @@ def main():
             tabela_resumo = dados_estado[['Estado', 'Massa_Total', 'Municipios']].copy()
             tabela_resumo.columns = ['Estado', 'Massa (t)', 'Municípios']
             tabela_resumo['Massa (t)'] = tabela_resumo['Massa (t)'].round(0)
+            
+            # Formatar a coluna de massa no padrão brasileiro
+            tabela_resumo['Massa (t)'] = tabela_resumo['Massa (t)'].apply(lambda x: formatar_br(x, 0))
+            tabela_resumo['Municípios'] = tabela_resumo['Municípios'].apply(lambda x: formatar_br(x, 0))
             
             st.dataframe(tabela_resumo.head(15), height=400, use_container_width=True)
     
@@ -640,11 +724,24 @@ def main():
                     colunas_para_mostrar.append(col)
             
             if colunas_para_mostrar:
-                st.dataframe(df[colunas_para_mostrar].head(20), use_container_width=True)
+                dados_amostra = df[colunas_para_mostrar].head(20).copy()
+                
+                # Formatar colunas numéricas no padrão brasileiro
+                for col in dados_amostra.columns:
+                    if dados_amostra[col].dtype in [np.int64, np.float64]:
+                        if 'População' in str(col) or 'pop' in str(col).lower():
+                            dados_amostra[col] = dados_amostra[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
+                        elif 'Massa' in str(col) or 'massa' in str(col).lower():
+                            dados_amostra[col] = dados_amostra[col].apply(lambda x: formatar_br(x, 1) if pd.notna(x) else x)
+                        else:
+                            # Para outras colunas numéricas, usar 0 casas decimais
+                            dados_amostra[col] = dados_amostra[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
+                
+                st.dataframe(dados_amostra, use_container_width=True)
     
     # Seção de informações técnicas
     with st.expander("📚 Informações Técnicas e Metodologia"):
-        st.markdown("""
+        st.markdown(f"""
         ## 📊 Fonte dos Dados
         
         **Sistema Nacional de Informações sobre Saneamento (SINISA) 2023**
@@ -653,7 +750,7 @@ def main():
         
         **Filtro aplicado:**
         - Apenas registros com valor 'Sim' na primeira coluna (Coluna A)
-        - Total de 12.822 registros válidos (94,1% do total)
+        - Total de {formatar_br(12822, 0)} registros válidos (94,1% do total)
         
         **Colunas principais utilizadas:**
         - Estado: Coluna D (Col_3)
@@ -672,7 +769,7 @@ def main():
         - Quando disponível: usa população real da coluna J
         - Fórmula: (Massa Total em kg) / População = kg/hab/ano
         - 1 tonelada = 1.000 kg
-        - Se população não disponível: usa média nacional de 365,21 kg/hab/ano para estimativa
+        - Se população não disponível: usa média nacional de {formatar_br(365.21, 1)} kg/hab/ano para estimativa
         
         ## 🧮 Simulação de Cenários
         
@@ -707,7 +804,7 @@ def main():
     st.markdown("""
     <div style='text-align: center'>
         <p>Desenvolvido para análise de dados SINISA 2023 | Dados: Sistema Nacional de Informações sobre Saneamento</p>
-        <p>Última atualização: Janeiro 2026 | Versão 2.5</p>
+        <p>Última atualização: Janeiro 2026 | Versão 2.6</p>
     </div>
     """, unsafe_allow_html=True)
 
