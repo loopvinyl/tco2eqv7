@@ -109,7 +109,7 @@ def identificar_colunas_principais(df):
     """
     colunas = {}
     
-    # Mapeamento baseado no relatório - CORRIGIDO COM COLUNAS AD E AE
+    # Mapeamento baseado no relatório - CORRIGIDO: COLUNAS AD E AE
     mapeamento = {
         'Município': ['município', 'municipio', 'cidade', 'local', 'nome_municipio', 'localidade'],
         'Estado': ['col_3', 'estado', 'uf', 'unidade da federação'],
@@ -118,8 +118,8 @@ def identificar_colunas_principais(df):
         'Tipo_Coleta': ['col_17', 'tipo de coleta', 'tipo_coleta', 'modalidade_coleta'],
         'Massa_Total': ['col_24', 'massa', 'total coletada', 'toneladas', 'peso', 'quantidade'],
         'Destino_Codigo': ['col_28', 'código destino', 'destino_codigo', 'cod_destino'],  # Coluna AC
-        'Destino_Texto': ['col_29', 'destino texto', 'destino_descricao', 'descrição destino', 'destino_final'],  # Coluna AD
-        'Agente_Executor': ['col_30', 'agente executor', 'executor', 'responsável', 'responsavel']  # Coluna AE
+        'Destino_Texto': ['col_29', 'destino texto', 'destino_descricao', 'descrição destino'],  # Coluna AD - CORRIGIDO
+        'Agente_Executor': ['col_30', 'agente executor', 'executor', 'responsável', 'responsavel']  # Coluna AE - CORRIGIDO
     }
     
     for tipo, padroes in mapeamento.items():
@@ -148,9 +148,9 @@ def identificar_colunas_principais(df):
         elif not encontrada and tipo == 'Destino_Codigo' and len(df.columns) > 28:
             colunas[tipo] = df.columns[28]  # Coluna AC
         elif not encontrada and tipo == 'Destino_Texto' and len(df.columns) > 29:
-            colunas[tipo] = df.columns[29]  # Coluna AD
+            colunas[tipo] = df.columns[29]  # Coluna AD - CORRIGIDO
         elif not encontrada and tipo == 'Agente_Executor' and len(df.columns) > 30:
-            colunas[tipo] = df.columns[30]  # Coluna AE
+            colunas[tipo] = df.columns[30]  # Coluna AE - CORRIGIDO
     
     # Para município, tentar encontrar por conteúdo
     if 'Município' not in colunas:
@@ -465,7 +465,7 @@ def main():
                             for tipo in tipos_coleta:
                                 st.markdown(f"- {tipo}")
                     
-                    # DESTINOS FINAIS - AGORA MOSTRA CORRETAMENTE A COLUNA AD
+                    # DESTINOS FINAIS - CORRIGIDO: USAR COLUNA AD (Destino_Texto)
                     if 'Destino_Texto' in colunas and colunas['Destino_Texto'] in dados_municipio_completo.columns:
                         destinos = dados_municipio_completo[colunas['Destino_Texto']].dropna()
                         
@@ -797,7 +797,7 @@ def main():
     st.markdown("""
     <div style='text-align: center'>
         <p>Desenvolvido para análise de dados SINISA 2023 | Dados: Sistema Nacional de Informações sobre Saneamento</p>
-        <p>Última atualização: Janeiro 2026 | Versão 3.1</p>
+        <p>Última atualização: Janeiro 2026 | Versão 3.2</p>
     </div>
     """, unsafe_allow_html=True)
 
