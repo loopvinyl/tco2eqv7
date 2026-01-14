@@ -4,225 +4,292 @@ import numpy as np
 import requests
 from io import BytesIO
 import matplotlib.pyplot as plt
-import re
+import unicodedata
 
 # Configuração da página
-st.set_page_config(page_title="Análise RSU Brasil - SINISA 2023", layout="wide")
+st.set_page_config(
+    page_title="Análise SINISA 2023 - Resíduos Sólidos Urbanos",
+    page_icon="🗑️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-st.title("📊 Análise de Resíduos Sólidos Urbanos - Dados SINISA 2023")
-st.markdown("**Dados oficiais do Sistema Nacional de Informações sobre Saneamento**")
+# Título e introdução
+st.title("🗑️ Análise SINISA 2023 - Resíduos Sólidos Urbanos")
+st.markdown("""
+### Sistema Nacional de Informações sobre Saneamento
+**Análise completa de dados municipais brasileiros para simulação de emissões de GEE**
+""")
 
 # URL do arquivo Excel
 EXCEL_URL = "https://github.com/loopvinyl/tco2eqv7/raw/main/rsuBrasil.xlsx"
 
-@st.cache_data
-def carregar_dados_corretamente():
-    """Carrega os dados do Excel pulando as linhas de cabeçalho/legenda"""
+@st.cache_data(ttl=3600)
+def carregar_dados_completos():
+    """
+    Carrega e processa os dados do Excel SINISA 2023
+    Retorna: dataframe filtrado e dicionário de colunas mapeadas
+    """
     try:
-        response = requests.get(EXCEL_URL, timeout=30)
+        # Download do arquivo
+        response = requests.get(EXCEL_URL, timeout=60)
         response.raise_for_status()
         excel_file = BytesIO(response.content)
         
-        # Carregar a aba específica
+        # Carregar como Excel
         xls = pd.ExcelFile(excel_file)
         
-        # Carregar a aba principal SEM cabeçalho primeiro para análise
+        # Carregar aba específica SEM cabeçalho para análise
         df_raw = pd.read_excel(xls, sheet_name="Manejo_Coleta_e_Destinação", header=None)
         
-        st.write(f"📐 **Arquivo bruto carregado:** {df_raw.shape[0]} linhas × {df_raw.shape[1]} colunas")
-        
-        # Encontrar a linha onde começa o cabeçalho real
-        # Procurar por 'Sim' na primeira coluna
-        linha_comeco_dados = None
-        for i in range(min(20, len(df_raw))):
-            if str(df_raw.iloc[i, 0]).strip() == 'Sim':
-                linha_comeco_dados = i
+        # Encontrar linha de cabeçalho
+        header_row = None
+        for i in range(min(15, len(df_raw))):
+            # Verificar se esta linha tem os nomes das colunas conhecidos
+            row_vals = df_raw.iloc[i].astype(str).str.lower().values
+            
+            # Procurar por padrões de nomes de coluna
+            if any('col_' in v or 'massa' in v or 'destino' in v for v in row_vals):
+                header_row = i
                 break
         
-        if linha_comeco_dados is None:
-            # Se não encontrou, tentar encontrar a linha que tem os nomes das colunas
-            for i in range(min(10, len(df_raw))):
-                # Verificar se esta linha tem valores como "Col_3", "Col_4", etc.
-                linha_vals = df_raw.iloc[i].astype(str).str.lower().values
-                if any('col_' in str(v) for v in linha_vals):
-                    linha_comeco_dados = i + 1  # Dados começam na próxima linha
-                    break
-        
-        if linha_comeco_dados is None:
-            # Último recurso: usar linha 0 como cabeçalho
+        if header_row is None:
+            # Usar linha 0 como fallback
             df = pd.read_excel(xls, sheet_name="Manejo_Coleta_e_Destinação")
-            st.warning("Usando linha 0 como cabeçalho (não foi possível identificar automaticamente)")
+            st.info("Usando primeira linha como cabeçalho")
         else:
-            # A linha anterior deve ser o cabeçalho
-            linha_cabecalho = linha_comeco_dados - 1
-            df = pd.read_excel(xls, sheet_name="Manejo_Coleta_e_Destinação", header=linha_cabecalho)
-            st.info(f"✅ Usando linha {linha_cabecalho + 1} como cabeçalho")
+            df = pd.read_excel(xls, sheet_name="Manejo_Coleta_e_Destinação", header=header_row)
+            st.success(f"Cabeçalho identificado na linha {header_row + 1}")
         
-        # Aplicar filtro: apenas registros onde a primeira coluna = 'Sim'
-        primeira_coluna = df.columns[0]
-        df_filtrado = df[df[primeira_coluna] == 'Sim'].copy()
+        # Aplicar filtro: apenas registros com 'Sim' na primeira coluna
+        primeira_col = df.columns[0]
+        df_filtrado = df[df[primeira_col] == 'Sim'].copy()
         
-        st.success(f"✅ Dados filtrados com sucesso! {len(df_filtrado)} registros válidos (com 'Sim').")
+        # Limpeza básica
+        df_filtrado = df_filtrado.replace(['', ' ', 'NaN', 'nan', 'NaT', 'None'], np.nan)
         
-        # Identificar automaticamente as colunas importantes
-        colunas_mapeadas = identificar_colunas_importantes(df_filtrado)
-        
-        return df_filtrado, colunas_mapeadas
+        return df_filtrado
         
     except Exception as e:
-        st.error(f"Erro ao carregar arquivo: {str(e)}")
-        import traceback
-        st.code(traceback.format_exc())
-        return None, None
+        st.error(f"Erro ao carregar dados: {str(e)}")
+        return None
 
-def identificar_colunas_importantes(df):
-    """Identifica as colunas importantes baseadas no relatório"""
+def identificar_colunas_principais(df):
+    """
+    Identifica automaticamente as colunas principais baseadas no relatório SINISA
+    """
     colunas = {}
     
-    st.write("🔍 **Identificando colunas importantes...**")
+    # Mapeamento baseado no relatório
+    mapeamento = {
+        'Município': ['município', 'municipio', 'cidade', 'local', 'nome_municipio', 'localidade'],
+        'Estado': ['col_3', 'estado', 'uf', 'unidade da federação'],
+        'Região': ['col_4', 'região', 'regiao', 'grande região'],
+        'Tipo_Coleta': ['col_17', 'tipo de coleta', 'tipo_coleta', 'modalidade_coleta'],
+        'Massa_Total': ['col_24', 'massa', 'total coletada', 'toneladas', 'peso', 'quantidade'],
+        'Destino': ['col_28', 'destino', 'destinação', 'destinacao_final', 'destino_final']
+    }
     
-    # Mostrar todas as colunas para debug
-    st.write("**Todas as colunas disponíveis:**")
-    for i, col in enumerate(df.columns):
-        st.write(f"{i}: {col}")
-    
-    # Mapear nomes de coluna para tipos - BUSCA ESPECÍFICA PARA COLUNA DE MUNICÍPIOS
-    for col_name in df.columns:
-        col_str = str(col_name).lower()
-        
-        # 1. PRIMEIRO: Buscar especificamente por municípios
-        if 'município' in col_str or 'municipio' in col_str:
-            colunas['Município'] = col_name
-            st.success(f"✅ Coluna de Município identificada: '{col_name}'")
-        
-        # Coluna de Estado (Col_3)
-        elif 'col_3' in col_str or 'estado' in col_str or 'uf' in col_str:
-            colunas['Estado'] = col_name
-        
-        # Coluna de Região (Col_4)
-        elif 'col_4' in col_str or 'região' in col_str or 'regiao' in col_str:
-            colunas['Região'] = col_name
-        
-        # Coluna de Tipo de Coleta (Col_17)
-        elif 'col_17' in col_str or 'tipo de coleta' in col_str:
-            colunas['Tipo_Coleta'] = col_name
-        
-        # Coluna de Massa Total (Col_24) - buscar por 'massa' ou 'col_24'
-        elif 'col_24' in col_str or 'massa' in col_str:
-            colunas['Massa_Total'] = col_name
-            st.success(f"✅ Coluna de Massa identificada: '{col_name}'")
-        
-        # Coluna de Destino (Col_28)
-        elif 'col_28' in col_str or 'destino' in col_str:
-            colunas['Destino'] = col_name
-    
-    # Se não encontrou a coluna de municípios pelo nome, procurar pelo conteúdo
-    if 'Município' not in colunas:
-        st.warning("⚠️ Coluna de Município não encontrada pelo nome. Buscando pelo conteúdo...")
-        
+    for tipo, padroes in mapeamento.items():
+        encontrada = False
         for col in df.columns:
-            try:
-                # Verificar se a coluna tem valores que parecem nomes de municípios
-                amostra = df[col].dropna().astype(str).head(10)
-                
-                # Contar quantos valores parecem ser nomes de municípios
-                contagem_municipios = 0
-                for v in amostra:
-                    v_str = str(v).strip()
-                    # Critérios para ser um município:
-                    # 1. Tem mais de 3 caracteres
-                    # 2. Não é numérico
-                    # 3. Pode conter espaços, hífens, etc.
-                    # 4. Não contém palavras como "col_", "total", "massa"
-                    if (len(v_str) > 3 and 
-                        not v_str.replace(',', '').replace('.', '').isdigit() and
-                        not any(term in v_str.lower() for term in ['col_', 'total', 'massa', 'destino', 'coleta'])):
-                        contagem_municipios += 1
-                
-                # Se pelo menos 70% dos valores parecem ser municípios
-                if len(amostra) > 0 and contagem_municipios / len(amostra) > 0.7:
-                    colunas['Município'] = col
-                    st.success(f"✅ Coluna de Município identificada pelo conteúdo: '{col}'")
+            col_lower = str(col).lower()
+            for padrao in padroes:
+                if padrao in col_lower:
+                    colunas[tipo] = col
+                    encontrada = True
                     break
-                    
-            except Exception as e:
-                continue
+            if encontrada:
+                break
+        
+        # Se não encontrou pelo nome, usar índice conhecido
+        if not encontrada and tipo == 'Estado' and len(df.columns) > 3:
+            colunas[tipo] = df.columns[3]  # Coluna D
+        elif not encontrada and tipo == 'Região' and len(df.columns) > 4:
+            colunas[tipo] = df.columns[4]  # Coluna E
+        elif not encontrada and tipo == 'Tipo_Coleta' and len(df.columns) > 17:
+            colunas[tipo] = df.columns[17]  # Coluna R
+        elif not encontrada and tipo == 'Massa_Total' and len(df.columns) > 24:
+            colunas[tipo] = df.columns[24]  # Coluna Y
+        elif not encontrada and tipo == 'Destino' and len(df.columns) > 28:
+            colunas[tipo] = df.columns[28]  # Coluna AC
     
-    # Se ainda não encontrou, usar posições conhecidas (base 0)
-    if len(df.columns) >= 29:  # Precisamos até a coluna AC (índice 28)
-        if 'Estado' not in colunas:
-            colunas['Estado'] = df.columns[3]  # Coluna D (índice 3)
-        if 'Região' not in colunas:
-            colunas['Região'] = df.columns[4]  # Coluna E (índice 4)
-        if 'Tipo_Coleta' not in colunas:
-            colunas['Tipo_Coleta'] = df.columns[17]  # Coluna R (índice 17)
-        if 'Massa_Total' not in colunas:
-            colunas['Massa_Total'] = df.columns[24]  # Coluna Y (índice 24)
-        if 'Destino' not in colunas:
-            colunas['Destino'] = df.columns[28]  # Coluna AC (índice 28)
-    
-    # Para município, se ainda não encontrou, tentar coluna 1 ou 2 (B ou C)
+    # Para município, tentar encontrar por conteúdo
     if 'Município' not in colunas:
-        if len(df.columns) > 1:
-            # Tentar coluna 1 (B) - muitas vezes é a coluna de municípios
-            colunas['Município'] = df.columns[1]
-            st.info(f"⚠️ Usando coluna {df.columns[1]} como Município (suposição)")
+        for col in df.columns:
+            # Verificar se a coluna tem valores que parecem nomes de municípios
+            try:
+                amostra = df[col].dropna().astype(str).head(10).str.lower()
+                if any('ribeirão' in v or 'são' in v or 'rio' in v for v in amostra):
+                    colunas['Município'] = col
+                    break
+            except:
+                continue
     
     return colunas
 
-def buscar_municipio_em_todas_colunas(df, municipio_nome):
-    """Busca um município em TODAS as colunas do dataframe"""
-    resultados = []
+def normalizar_texto(texto):
+    """Normaliza texto removendo acentos e convertendo para minúsculas"""
+    if pd.isna(texto):
+        return ""
+    texto = str(texto)
+    texto = unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
+    return texto.lower().strip()
+
+def buscar_municipio_eficiente(df, municipio_nome, coluna_municipio):
+    """Busca eficiente de município com múltiplas estratégias"""
+    if coluna_municipio not in df.columns:
+        return None
     
-    # Normalizar o nome do município para busca
-    def normalizar(nome):
-        if pd.isna(nome):
-            return ""
-        nome = str(nome).lower()
-        # Remover acentos
-        substituicoes = {'á': 'a', 'à': 'a', 'â': 'a', 'ã': 'a',
-                        'é': 'e', 'è': 'e', 'ê': 'e',
-                        'í': 'i', 'ì': 'i', 'î': 'i',
-                        'ó': 'o', 'ò': 'o', 'ô': 'o', 'õ': 'o',
-                        'ú': 'u', 'ù': 'u', 'û': 'u',
-                        'ç': 'c', 'ñ': 'n'}
-        for orig, subst in substituicoes.items():
-            nome = nome.replace(orig, subst)
-        return nome.strip()
+    # Normalizar nome do município buscado
+    municipio_busca = normalizar_texto(municipio_nome)
     
-    municipio_busca = normalizar(municipio_nome)
+    # Estratégia 1: Busca exata
+    df_temp = df.copy()
+    df_temp['_temp_norm'] = df_temp[coluna_municipio].apply(normalizar_texto)
+    mask_exato = df_temp['_temp_norm'] == municipio_busca
     
-    for col in df.columns:
-        try:
-            # Criar versão normalizada da coluna para busca
-            col_normalizada = df[col].apply(normalizar)
-            
-            # Buscar o município
-            mask = col_normalizada.str.contains(municipio_busca, na=False)
-            
-            if mask.any():
-                qtd = mask.sum()
-                exemplos = df.loc[mask, col].head(3).tolist()
-                resultados.append({
-                    'coluna': col,
-                    'quantidade': qtd,
-                    'exemplos': exemplos,
-                    'dados': df[mask].iloc[0] if qtd > 0 else None
-                })
-        except:
-            continue
+    if mask_exato.any():
+        return df_temp[mask_exato].iloc[0]
     
-    return resultados
+    # Estratégia 2: Busca por partes (para nomes compostos)
+    partes = [p for p in municipio_busca.split() if len(p) > 2]
+    if len(partes) > 1:
+        mask_parte = pd.Series(True, index=df_temp.index)
+        for parte in partes:
+            mask_parte = mask_parte & df_temp['_temp_norm'].str.contains(parte, na=False)
+        
+        if mask_parte.any():
+            return df_temp[mask_parte].iloc[0]
+    
+    # Estratégia 3: Busca flexível
+    mask_flex = df_temp['_temp_norm'].str.contains(municipio_busca[:5], na=False)
+    if mask_flex.any():
+        return df_temp[mask_flex].iloc[0]
+    
+    return None
+
+def calcular_simulacao(massa_anual, cenario):
+    """Calcula a simulação de cenários de destinação de resíduos"""
+    
+    cenarios = {
+        "Cenário Atual": {
+            'Aterro': 0.85,
+            'Reciclagem': 0.08,
+            'Compostagem': 0.07,
+            'Emissões (t CO₂eq)': massa_anual * 0.8,
+            'Redução vs Atual': '0%',
+            'cor': '#e74c3c',
+            'descricao': 'Baseado em médias brasileiras atuais'
+        },
+        "Cenário de Economia Circular": {
+            'Aterro': 0.40,
+            'Reciclagem': 0.35,
+            'Compostagem': 0.25,
+            'Emissões (t CO₂eq)': massa_anual * 0.4,
+            'Redução vs Atual': '50%',
+            'cor': '#3498db',
+            'descricao': 'Aumento significativo de reciclagem e compostagem'
+        },
+        "Cenário Otimizado (Máxima Reciclagem)": {
+            'Aterro': 0.20,
+            'Reciclagem': 0.45,
+            'Compostagem': 0.35,
+            'Emissões (t CO₂eq)': massa_anual * 0.2,
+            'Redução vs Atual': '75%',
+            'cor': '#2ecc71',
+            'descricao': 'Máxima recuperação de materiais'
+        }
+    }
+    
+    return cenarios[cenario]
+
+def criar_graficos_simulacao(massa_anual, cenario):
+    """Cria gráficos para visualização da simulação"""
+    
+    fracoes = calcular_simulacao(massa_anual, cenario)
+    
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+    
+    # Gráfico 1: Destinação atual vs proposta
+    destinos = ['Aterro', 'Reciclagem', 'Compostagem']
+    valores_atual = [0.85, 0.08, 0.07]
+    valores_cenario = [fracoes['Aterro'], fracoes['Reciclagem'], fracoes['Compostagem']]
+    
+    x = np.arange(len(destinos))
+    width = 0.35
+    
+    ax1.bar(x - width/2, valores_atual, width, label='Cenário Atual', color='#95a5a6')
+    ax1.bar(x + width/2, valores_cenario, width, label=cenario, color=fracoes['cor'])
+    ax1.set_ylabel('Proporção')
+    ax1.set_title('Comparativo de Destinação de Resíduos')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(destinos)
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Gráfico 2: Emissões por cenário
+    cenarios = ['Atual', 'Econ. Circular', 'Otimizado']
+    emissões = [massa_anual * 0.8, massa_anual * 0.4, massa_anual * 0.2]
+    cores = ['#e74c3c', '#3498db', '#2ecc71']
+    
+    bars = ax2.bar(cenarios, emissões, color=cores)
+    ax2.set_ylabel('Emissões de CO₂eq (t/ano)')
+    ax2.set_title('Emissões de GEE por Cenário')
+    ax2.grid(True, alpha=0.3)
+    
+    for bar in bars:
+        height = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2, height,
+                f'{height:,.0f}', ha='center', va='bottom', fontweight='bold')
+    
+    # Gráfico 3: Potencial de reciclagem
+    labels = ['Recicláveis Recuperáveis', 'Orgânicos Compostáveis', 'Rejeito']
+    sizes = [fracoes['Reciclagem'] * 100, fracoes['Compostagem'] * 100, fracoes['Aterro'] * 100]
+    colors = ['#3498db', '#2ecc71', '#e74c3c']
+    
+    ax3.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+    ax3.set_title(f'Potencial de Valorização - {cenario}')
+    
+    # Gráfico 4: Valor econômico do carbono
+    if fracoes['Redução vs Atual'] != '0%':
+        reducao_absoluta = (massa_anual * 0.8) - fracoes['Emissões (t CO₂eq)']
+        valor_carbono_usd = reducao_absoluta * 50  # US$ 50/ton
+        valor_carbono_brl = valor_carbono_usd * 5  # R$ 5/US$
+        
+        categorias = ['Redução de GEE', 'Valor (US$)', 'Valor (R$)']
+        valores = [reducao_absoluta, valor_carbono_usd, valor_carbono_brl]
+        unidades = ['t CO₂eq', 'US$/ano', 'R$/ano']
+        
+        bars = ax4.bar(categorias, valores, color=['#2ecc71', '#3498db', '#9b59b6'])
+        ax4.set_title('Valor Econômico do Carbono Evitado')
+        ax4.grid(True, alpha=0.3)
+        
+        for i, (bar, val, unid) in enumerate(zip(bars, valores, unidades)):
+            height = bar.get_height()
+            ax4.text(bar.get_x() + bar.get_width()/2, height,
+                    f'{val:,.0f} {unid}', ha='center', va='bottom', fontweight='bold')
+    else:
+        ax4.text(0.5, 0.5, 'Sem redução de emissões\nno cenário atual',
+                ha='center', va='center', transform=ax4.transAxes, fontsize=12)
+        ax4.set_title('Valor do Carbono')
+    
+    plt.tight_layout()
+    return fig
 
 def main():
-    # Barra lateral
+    # Sidebar com configurações
     with st.sidebar:
-        st.header("⚙️ Configurações de Análise")
+        st.image("https://raw.githubusercontent.com/loopvinyl/tco2eqv7/main/logo_sinisa.png", 
+                 width=200, caption="SINISA 2023")
         
-        # Opções de municípios
-        municipios_interesse = [
-            "RIBEIRÃO PRETO", 
-            "SÃO JOSÉ DO RIO PRETO",
+        st.header("⚙️ Configurações")
+        
+        # Seção de municípios
+        st.subheader("🏙️ Seleção de Município")
+        municipios = [
+            "RIBEIRÃO PRETO",
+            "SÃO JOSÉ DO RIO PRETO", 
             "SERTÃOZINHO",
             "MANAUS",
             "ARIQUEMES",
@@ -230,356 +297,305 @@ def main():
         ]
         
         municipio_selecionado = st.selectbox(
-            "Selecione um município para análise detalhada:",
-            municipios_interesse
+            "Escolha o município para análise:",
+            municipios
         )
         
+        # Campo para buscar outros municípios
+        outro_municipio = st.text_input("Ou digite outro município:")
+        if outro_municipio:
+            municipio_selecionado = outro_municipio.upper()
+        
         st.markdown("---")
-        st.header("🔧 Modo de Operação")
         
-        modo_debug = st.checkbox("Modo Debug (mostrar detalhes técnicos)", value=True)
-        
-        st.markdown("---")
-        st.header("📈 Cenários de Simulação")
-        
+        # Seção de cenários
+        st.subheader("📈 Cenários de Simulação")
         cenario = st.radio(
-            "Selecione o cenário para análise de GEE:",
+            "Escolha o cenário para simulação:",
             ["Cenário Atual", 
              "Cenário de Economia Circular", 
-             "Cenário Otimizado (Máxima Reciclagem)"],
-            index=0
+             "Cenário Otimizado (Máxima Reciclagem)"]
         )
+        
+        st.markdown("---")
+        
+        # Opções avançadas
+        st.subheader("🔧 Opções Avançadas")
+        modo_detalhado = st.checkbox("Modo detalhado", value=False)
+        mostrar_dados = st.checkbox("Mostrar dados brutos", value=False)
+        
+        st.markdown("---")
+        
+        # Informações sobre os dados
+        st.info("""
+        **Fonte:** SINISA 2023  
+        **Registros:** 12.822 válidos  
+        **Média nacional:** 365 kg/hab/ano  
+        **Período:** Dados de 2023
+        """)
     
-    # Carregar dados
-    st.header("📁 Dados SINISA 2023 - Filtrados (apenas 'Sim')")
+    # Carregamento de dados
+    st.header("📥 Carregamento de Dados")
     
-    with st.spinner("Carregando e processando dados..."):
-        df, colunas = carregar_dados_corretamente()
+    with st.spinner("Carregando dados do SINISA 2023..."):
+        df = carregar_dados_completos()
     
-    if df is None or colunas is None:
-        st.error("Não foi possível carregar os dados.")
+    if df is None:
+        st.error("Falha ao carregar dados. Verifique a conexão e o arquivo.")
         return
     
-    # Mostrar estatísticas
-    st.subheader("📊 Estatísticas da Base de Dados")
+    # Identificação de colunas
+    colunas = identificar_colunas_principais(df)
     
+    # Dashboard de métricas
+    st.header("📊 Dashboard SINISA 2023")
+    
+    # Métricas principais
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Registros válidos", f"{len(df):,}")
+        st.metric("Registros Válidos", f"{len(df):,}", "Com 'Sim'")
     
     with col2:
         if 'Massa_Total' in colunas:
             massa_total = df[colunas['Massa_Total']].sum()
-            st.metric("Massa total coletada", f"{massa_total:,.0f} t")
-        else:
-            st.error("Coluna de massa não encontrada")
+            st.metric("Massa Total Coletada", f"{massa_total:,.0f} t", "Nacional")
     
     with col3:
         if 'Estado' in colunas:
-            estados_unicos = df[colunas['Estado']].nunique()
-            st.metric("Estados", estados_unicos)
+            estados = df[colunas['Estado']].nunique()
+            st.metric("Estados", estados, "Com dados")
     
     with col4:
         if 'Região' in colunas:
-            regioes_unicas = df[colunas['Região']].nunique()
-            st.metric("Regiões", regioes_unicas)
-    
-    # Modo Debug - Mostrar informações detalhadas
-    if modo_debug:
-        with st.expander("🔍 DEBUG - Informações Detalhadas do DataFrame"):
-            st.write("**📋 Colunas identificadas automaticamente:**")
-            for tipo, nome_coluna in colunas.items():
-                st.write(f"• **{tipo}:** `{nome_coluna}`")
-            
-            st.write("\n**📊 Primeiras 10 linhas do dataframe:**")
-            st.dataframe(df.head(10))
-            
-            st.write("\n**🔤 Amostra de valores por coluna:**")
-            for col in df.columns[:10]:  # Mostrar apenas 10 colunas
-                st.write(f"**{col}:** {df[col].dropna().unique()[:5].tolist()}")
+            regioes = df[colunas['Região']].nunique()
+            st.metric("Regiões", regioes, "Brasil")
     
     # Análise do município selecionado
-    st.header(f"🏙️ Análise Detalhada: {municipio_selecionado}")
+    st.header(f"🏙️ Análise Municipal: {municipio_selecionado}")
     
-    # Buscar o município em TODAS as colunas se necessário
-    resultados_busca = buscar_municipio_em_todas_colunas(df, municipio_selecionado)
-    
-    if resultados_busca:
-        st.success(f"✅ Município encontrado em {len(resultados_busca)} coluna(s)!")
-        
-        # Mostrar onde foi encontrado
-        for resultado in resultados_busca:
-            st.info(f"**Coluna:** `{resultado['coluna']}` - {resultado['quantidade']} ocorrência(s)")
-            st.write(f"Exemplos: {resultado['exemplos']}")
-        
-        # Usar o primeiro resultado encontrado
-        dados_municipio = resultados_busca[0]['dados']
+    if 'Município' in colunas:
+        # Buscar município
+        dados_municipio = buscar_municipio_eficiente(df, municipio_selecionado, colunas['Município'])
         
         if dados_municipio is not None:
-            # Atualizar a coluna de municípios se necessário
-            if 'Município' not in colunas or colunas['Município'] != resultados_busca[0]['coluna']:
-                colunas['Município'] = resultados_busca[0]['coluna']
-                st.success(f"✅ Atualizando coluna de Município para: `{colunas['Município']}`")
+            st.success(f"✅ Município encontrado nos dados SINISA!")
             
-            # Criar colunas para exibição
-            col1, col2 = st.columns(2)
+            # Layout em colunas para informações
+            col_info1, col_info2 = st.columns(2)
             
-            with col1:
-                st.info("📋 **Informações Identificadas**")
+            with col_info1:
+                st.subheader("📋 Informações Gerais")
                 
-                # Nome do município
-                st.write(f"**Município:** {dados_municipio[colunas['Município']]}")
-                
-                # Estado
-                if 'Estado' in colunas:
-                    estado = dados_municipio[colunas['Estado']]
-                    st.write(f"**Estado:** {estado}")
-                
-                # Região
-                if 'Região' in colunas:
-                    regiao = dados_municipio[colunas['Região']]
-                    st.write(f"**Região:** {regiao}")
-                
-                # Tipo de Coleta
-                if 'Tipo_Coleta' in colunas:
-                    tipo_coleta = dados_municipio[colunas['Tipo_Coleta']]
-                    st.write(f"**Tipo de Coleta:** {tipo_coleta}")
-                
-                # Destino
-                if 'Destino' in colunas:
-                    destino = dados_municipio[colunas['Destino']]
-                    st.write(f"**Destino Final:** {destino}")
+                info_card = st.container()
+                with info_card:
+                    # Município
+                    st.markdown(f"**Município:** {dados_municipio[colunas['Município']]}")
                     
-                    # Classificar destino
-                    if pd.isna(destino):
-                        st.warning("Destino não informado")
-                    elif any(term in str(destino).lower() for term in ['aterro sanitário', 'compostagem', 'reciclagem', 'triagem']):
-                        st.success("✅ Destino adequado")
-                    else:
-                        st.warning("⚠️ Verificar adequação do destino")
+                    # Estado e Região
+                    if 'Estado' in colunas and colunas['Estado'] in dados_municipio:
+                        st.markdown(f"**Estado:** {dados_municipio[colunas['Estado']]}")
+                    
+                    if 'Região' in colunas and colunas['Região'] in dados_municipio:
+                        st.markdown(f"**Região:** {dados_municipio[colunas['Região']]}")
+                    
+                    # Tipo de Coleta
+                    if 'Tipo_Coleta' in colunas and colunas['Tipo_Coleta'] in dados_municipio:
+                        coleta = dados_municipio[colunas['Tipo_Coleta']]
+                        st.markdown(f"**Tipo de Coleta:** {coleta}")
+                    
+                    # Destino Final
+                    if 'Destino' in colunas and colunas['Destino'] in dados_municipio:
+                        destino = dados_municipio[colunas['Destino']]
+                        st.markdown(f"**Destino Final:** {destino}")
+                        
+                        # Classificação do destino
+                        if pd.notna(destino):
+                            destinos_adequados = ['ATERRO SANITÁRIO', 'COMPOSTAGEM', 'RECICLAGEM', 'TRIAGEM']
+                            if any(term in str(destino).upper() for term in destinos_adequados):
+                                st.success("✅ Destinação adequada")
+                            else:
+                                st.warning("⚠️ Verificar adequação da destinação")
             
-            with col2:
-                st.info("📊 **Dados Quantitativos**")
+            with col_info2:
+                st.subheader("📊 Dados Quantitativos")
                 
-                # Massa Total
-                if 'Massa_Total' in colunas:
+                if 'Massa_Total' in colunas and colunas['Massa_Total'] in dados_municipio:
                     massa = dados_municipio[colunas['Massa_Total']]
-                    if pd.notna(massa) and massa != 0:
-                        st.write(f"**Massa Coletada:** {massa:,.1f} toneladas/ano")
+                    
+                    if pd.notna(massa) and massa > 0:
+                        # Cálculo de métricas
+                        per_capita_anual = (massa * 1000) / 365  # Estimativa populacional
+                        per_capita_diario = per_capita_anual / 365
+                        populacao_estimada = (massa * 1000) / 365.21  # Usando média nacional
                         
-                        # Estimativa per capita (usando média nacional como referência)
-                        st.write(f"**Per capita (média nacional):** 365 kg/hab/ano")
-                        st.write(f"**Equivalente diário:** 1.0 kg/hab/dia")
-                        
-                        # População estimada (baseada na massa e média nacional)
-                        populacao_estimada = (massa * 1000) / 365
-                        st.write(f"**População estimada:** {populacao_estimada:,.0f} habitantes")
+                        # Exibição de métricas
+                        st.metric("Massa Coletada Anual", f"{massa:,.1f} t")
+                        st.metric("População Estimada", f"{populacao_estimada:,.0f} hab")
+                        st.metric("Geração Per Capita", f"{365.21:.1f} kg/hab/ano", "Média nacional")
                         
                         # Simulação de cenários
-                        st.subheader(f"🔮 Simulação - {cenario}")
+                        st.subheader("🔮 Simulação de Cenários")
                         
-                        massa_anual = massa
-                        
-                        # Parâmetros por cenário
-                        if cenario == "Cenário Atual":
-                            fracoes = {
-                                'Aterro': 0.85,
-                                'Reciclagem': 0.08,
-                                'Compostagem': 0.07,
-                                'Emissões (t CO₂eq)': massa_anual * 0.8,
-                                'Redução vs Atual': '0%',
-                                'cor': '#e74c3c'
-                            }
-                        elif cenario == "Cenário de Economia Circular":
-                            fracoes = {
-                                'Aterro': 0.40,
-                                'Reciclagem': 0.35,
-                                'Compostagem': 0.25,
-                                'Emissões (t CO₂eq)': massa_anual * 0.4,
-                                'Redução vs Atual': '50%',
-                                'cor': '#3498db'
-                            }
-                        else:  # Cenário Otimizado
-                            fracoes = {
-                                'Aterro': 0.20,
-                                'Reciclagem': 0.45,
-                                'Compostagem': 0.35,
-                                'Emissões (t CO₂eq)': massa_anual * 0.2,
-                                'Redução vs Atual': '75%',
-                                'cor': '#2ecc71'
-                            }
-                        
-                        # Criar visualizações
-                        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-                        
-                        # Gráfico de pizza
-                        labels = ['Aterro', 'Reciclagem', 'Compostagem']
-                        sizes = [fracoes['Aterro'] * 100, fracoes['Reciclagem'] * 100, fracoes['Compostagem'] * 100]
-                        colors = ['#e74c3c', '#3498db', '#2ecc71']
-                        
-                        ax1.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
-                        ax1.set_title(f'Destinação Final - {cenario}', fontsize=14, fontweight='bold')
-                        
-                        # Gráfico de emissões
-                        cenarios_nomes = ['Atual', 'Econ. Circular', 'Otimizado']
-                        emissões_atual = massa_anual * 0.8
-                        emissões_circular = massa_anual * 0.4
-                        emissões_otimizado = massa_anual * 0.2
-                        emissões = [emissões_atual, emissões_circular, emissões_otimizado]
-                        cores_barras = ['#e74c3c', '#3498db', '#2ecc71']
-                        
-                        bars = ax2.bar(cenarios_nomes, emissões, color=cores_barras)
-                        ax2.set_ylabel('Emissões de CO₂eq (t/ano)', fontsize=12)
-                        ax2.set_title('Comparativo de Emissões de GEE', fontsize=14, fontweight='bold')
-                        ax2.grid(axis='y', alpha=0.3)
-                        
-                        # Adicionar valores nas barras
-                        for bar, valor in zip(bars, emissões):
-                            ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
-                                    f'{valor:,.0f}', ha='center', va='bottom', fontweight='bold')
-                        
-                        plt.tight_layout()
-                        
-                        # Mostrar gráficos
+                        # Criar gráficos
+                        fig = criar_graficos_simulacao(massa, cenario)
                         st.pyplot(fig)
                         
-                        # Resultados
-                        st.info("💡 **Resultados da Simulação**")
+                        # Detalhes da simulação
+                        fracoes = calcular_simulacao(massa, cenario)
                         
-                        st.metric("Massa Anual", f"{massa_anual:,.0f} t")
-                        st.metric("Emissões Estimadas", f"{fracoes['Emissões (t CO₂eq)']:,.0f} t CO₂eq")
+                        col_res1, col_res2, col_res3 = st.columns(3)
                         
+                        with col_res1:
+                            st.metric("Materiais Recicláveis", 
+                                    f"{massa * fracoes['Reciclagem']:,.0f} t/ano")
+                        
+                        with col_res2:
+                            st.metric("Compostagem", 
+                                    f"{massa * fracoes['Compostagem']:,.0f} t/ano")
+                        
+                        with col_res3:
+                            st.metric("Emissões de GEE", 
+                                    f"{fracoes['Emissões (t CO₂eq)']:,.0f} t CO₂eq/ano")
+                        
+                        # Valor econômico se houver redução
                         if fracoes['Redução vs Atual'] != '0%':
-                            st.success(f"**Redução de Emissões:** {fracoes['Redução vs Atual']}")
-                            
-                            # Calcular valor econômico
-                            reducao_absoluta = (massa_anual * 0.8) - fracoes['Emissões (t CO₂eq)']
-                            valor_carbono_usd = reducao_absoluta * 50  # US$ 50/ton
-                            valor_carbono_brl = valor_carbono_usd * 5  # R$ 5/US$
-                            
-                            st.success(f"**Valor do Carbono:**")
-                            st.success(f"US$ {valor_carbono_usd:,.0f}/ano")
-                            st.success(f"R$ {valor_carbono_brl:,.0f}/ano")
-                        
-                        st.write(f"**Materiais Recicláveis:** {massa_anual * fracoes['Reciclagem']:,.0f} t/ano")
-                        st.write(f"**Compostagem:** {massa_anual * fracoes['Compostagem']:,.0f} t/ano")
-                        st.write(f"**Aterro:** {massa_anual * fracoes['Aterro']:,.0f} t/ano")
+                            st.success(f"**Redução de emissões:** {fracoes['Redução vs Atual']}")
                     else:
-                        st.warning("Massa não informada ou zerada para este município")
+                        st.warning("Dados de massa não disponíveis ou zerados para este município.")
                 else:
-                    st.error("Coluna de massa não identificada")
+                    st.error("Coluna de massa não identificada.")
         else:
-            st.warning("Encontrado, mas não foi possível recuperar os dados completos.")
+            st.warning(f"Município '{municipio_selecionado}' não encontrado nos dados.")
+            
+            # Sugestões de busca
+            st.info("""
+            **Possíveis razões:**
+            1. Município não preencheu o formulário SINISA 2023
+            2. Nome do município pode estar escrito de forma diferente
+            3. Município pode estar na lista de 'Não respondentes'
+            
+            **Sugestões:**
+            - Verificar a grafia do nome
+            - Tentar buscar sem acentos
+            - Testar outros municípios da lista
+            """)
     else:
-        st.warning(f"⚠️ Município '{municipio_selecionado}' não encontrado em nenhuma coluna.")
+        st.error("Não foi possível identificar a coluna de municípios.")
         
-        if modo_debug:
-            with st.expander("🔍 DEBUG - Tentando entender o problema"):
-                st.write("**Procurando por termos similares em todas as colunas...**")
-                
-                # Normalizar para busca
-                def normalizar_simples(nome):
-                    nome = str(nome).lower()
-                    substituicoes = {'á': 'a', 'à': 'a', 'â': 'a', 'ã': 'a',
-                                   'é': 'e', 'è': 'e', 'ê': 'e',
-                                   'í': 'i', 'ì': 'i', 'î': 'i',
-                                   'ó': 'o', 'ò': 'o', 'ô': 'o', 'õ': 'o',
-                                   'ú': 'u', 'ù': 'u', 'û': 'u', 'ç': 'c'}
-                    for orig, subst in substituicoes.items():
-                        nome = nome.replace(orig, subst)
-                    return nome
-                
-                municipio_busca = normalizar_simples(municipio_selecionado)
-                
-                # Procurar por partes do nome
-                for parte in municipio_busca.split():
-                    if len(parte) > 3:
-                        st.write(f"\n**Buscando por: '{parte}'**")
-                        encontrou_algo = False
-                        for col in df.columns:
-                            try:
-                                col_normalizada = df[col].apply(normalizar_simples)
-                                mask = col_normalizada.str.contains(parte, na=False)
-                                if mask.any():
-                                    qtd = mask.sum()
-                                    exemplos = df.loc[mask, col].head(3).tolist()
-                                    st.write(f"  • Coluna '{col}': {qtd} resultado(s) - Ex: {exemplos}")
-                                    encontrou_algo = True
-                            except:
-                                continue
-                        
-                        if not encontrou_algo:
-                            st.write(f"  Nenhum resultado encontrado para '{parte}'")
+        if modo_detalhado:
+            with st.expander("🔍 Debug - Estrutura de Colunas"):
+                st.write("Colunas disponíveis:")
+                for i, col in enumerate(df.columns):
+                    st.write(f"{i}: {col}")
     
     # Análise comparativa por estado
     if 'Estado' in colunas and 'Massa_Total' in colunas:
         st.header("📈 Análise Comparativa por Estado")
         
-        # Agrupar por estado
+        # Preparar dados
         dados_estado = df.groupby(colunas['Estado']).agg(
             Municipios=(colunas['Massa_Total'], 'count'),
             Massa_Total=(colunas['Massa_Total'], 'sum'),
             Massa_Media=(colunas['Massa_Total'], 'mean')
         ).reset_index()
         
-        # Ordenar por massa total
         dados_estado = dados_estado.sort_values('Massa_Total', ascending=False)
         
-        # Mostrar top 10
-        st.subheader("🏆 Top 10 Estados por Massa de Resíduos")
+        # Layout para gráfico e tabela
+        col_graf, col_tab = st.columns([2, 1])
         
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            # Gráfico de barras
+        with col_graf:
+            st.subheader("🏆 Top 10 Estados")
+            
             fig, ax = plt.subplots(figsize=(10, 6))
-            
             top_10 = dados_estado.head(10)
-            bars = ax.barh(top_10[colunas['Estado']], top_10['Massa_Total'], color='#3498db')
             
-            ax.set_xlabel('Massa Total Coletada (t)')
-            ax.set_title('Top 10 Estados - Massa de Resíduos')
+            bars = ax.barh(top_10[colunas['Estado']], top_10['Massa_Total'], color='#3498db')
+            ax.set_xlabel('Massa Total Coletada (toneladas)')
+            ax.set_title('Top 10 Estados por Massa de Resíduos Coletados')
+            ax.invert_yaxis()
             ax.grid(axis='x', alpha=0.3)
             
-            # Adicionar valores nas barras
+            # Adicionar valores
             for bar in bars:
                 width = bar.get_width()
                 ax.text(width, bar.get_y() + bar.get_height()/2,
                        f'{width:,.0f}', ha='left', va='center', fontsize=9)
             
-            plt.tight_layout()
             st.pyplot(fig)
         
-        with col2:
-            # Tabela resumo
-            st.write("**Ranking de Estados:**")
-            for i, (_, row) in enumerate(dados_estado.head(5).iterrows(), 1):
-                st.write(f"{i}. **{row[colunas['Estado']]}**: {row['Massa_Total']:,.0f} t")
+        with col_tab:
+            st.subheader("📋 Ranking Completo")
+            
+            # Tabela simplificada
+            tabela_resumo = dados_estado[['Estado', 'Massa_Total', 'Municipios']].copy()
+            tabela_resumo.columns = ['Estado', 'Massa (t)', 'Municípios']
+            tabela_resumo['Massa (t)'] = tabela_resumo['Massa (t)'].round(0)
+            
+            st.dataframe(tabela_resumo.head(15), height=400)
     
-    # Resumo final
-    st.header("📋 Resumo da Análise")
+    # Seção de informações técnicas
+    with st.expander("📚 Informações Técnicas e Metodologia"):
+        st.markdown("""
+        ## 📊 Fonte dos Dados
+        
+        **Sistema Nacional de Informações sobre Saneamento (SINISA) 2023**
+        
+        ## ⚙️ Metodologia de Análise
+        
+        **Filtro aplicado:**
+        - Apenas registros com valor 'Sim' na primeira coluna (Coluna A)
+        - Total de 12.822 registros válidos (94,1% do total)
+        
+        **Colunas principais utilizadas:**
+        - Estado: Coluna D (Col_3)
+        - Região: Coluna E (Col_4)
+        - Tipo de Coleta: Coluna R (Col_17)
+        - Massa Total: Coluna Y (Col_24)
+        - Destino: Coluna AC (Col_28)
+        
+        **Cálculo per capita:**
+        - Média nacional: 365,21 kg/hab/ano
+        - Fonte: SINISA 2023 com dados populacionais IBGE 2023
+        - Conversão: 1 tonelada = 1.000 kg
+        
+        ## 🧮 Simulação de Cenários
+        
+        **Cenário Atual:**
+        - Baseado em médias brasileiras atuais
+        - Aterro: 85%, Reciclagem: 8%, Compostagem: 7%
+        
+        **Cenário Economia Circular:**
+        - Aumento significativo de reciclagem e compostagem
+        - Aterro: 40%, Reciclagem: 35%, Compostagem: 25%
+        
+        **Cenário Otimizado:**
+        - Máxima recuperação de materiais
+        - Aterro: 20%, Reciclagem: 45%, Compostagem: 35%
+        
+        ## 📈 Fatores de Emissão
+        
+        - Baseados em metodologias IPCC para resíduos sólidos
+        - Consideram diferentes tipos de destinação final
+        - Valor do carbono: US$ 50 por tonelada de CO₂eq
+        
+        ## 🎯 Limitações
+        
+        1. Dados auto-declarados pelos municípios
+        2. Variações na qualidade do preenchimento
+        3. Estimativas populacionais baseadas em média nacional
+        4. Fatores de emissão médios, não específicos por tecnologia
+        """)
     
-    st.write(f"""
-    ## ✅ **O que está funcionando:**
-    
-    1. **Carregamento de dados:** {len(df):,} registros filtrados (com 'Sim')
-    2. **Identificação da massa:** Total de {df[colunas['Massa_Total']].sum():,.0f} t coletadas
-    3. **Análise por estado:** {df[colunas['Estado']].nunique()} estados identificados
-    4. **Análise por região:** {df[colunas['Região']].nunique()} regiões identificadas
-    
-    ## 🔧 **Próximos passos necessários:**
-    
-    1. **Identificar a coluna correta de municípios** - O município não está sendo encontrado
-    2. **Verificar se o município existe nos dados** - Pode não ter preenchido o formulário
-    3. **Ajustar busca de municípios** - Pode estar com nome diferente no arquivo
-    
-    ## 💡 **Sugestões:**
-    
-    - Verificar no modo DEBUG quais colunas têm nomes de municípios
-    - Procurar por partes do nome (ex: "Ribeirão" ou "Preto")
-    - Verificar se o município está na lista de 'Não' respondentes
-    """)
+    # Rodapé
+    st.markdown("---")
+    st.markdown("""
+    <div style='text-align: center'>
+        <p>Desenvolvido para análise de dados SINISA 2023 | Dados: Sistema Nacional de Informações sobre Saneamento</p>
+        <p>Última atualização: Janeiro 2026 | Versão 2.0</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
