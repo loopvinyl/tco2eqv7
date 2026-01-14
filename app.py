@@ -25,13 +25,6 @@ st.markdown("""
 # URL do arquivo Excel
 EXCEL_URL = "https://github.com/loopvinyl/tco2eqv7/raw/main/rsuBrasil.xlsx"
 
-# Mapeamento dos códigos de destino final
-MAPEAMENTO_DESTINOS = {
-    '3518859': 'Aterro controlado',
-    '3543402': 'Unidade de triagem (galpão ou usina)',
-    'outros_codigos': {}  # Pode ser expandido conforme necessário
-}
-
 # Função para formatar números no padrão brasileiro
 def formatar_br(numero, casas_decimais=1, sufixo=""):
     """Formata um número no padrão brasileiro (vírgula decimal, ponto milhar)"""
@@ -41,7 +34,8 @@ def formatar_br(numero, casas_decimais=1, sufixo=""):
     try:
         # Converter para float se for string
         if isinstance(numero, str):
-            numero = float(numero.replace(",", ".").replace(".", "", numero.count(".")-1))
+            # Remover pontos de milhar e substituir vírgula decimal por ponto
+            numero = float(numero.replace(".", "").replace(",", "."))
         
         # Formatar com separador de milhar e vírgula decimal
         if casas_decimais == 0:
@@ -56,25 +50,6 @@ def formatar_br(numero, casas_decimais=1, sufixo=""):
         formatado = formatado.replace(",", "X").replace(".", ",").replace("X", ".")
         
         return f"{formatado}{sufixo}"
-    except:
-        return str(numero)
-
-# Função para formatar números grandes de forma legível
-def formatar_grande(numero, casas_decimais=1):
-    """Formata números grandes com sufixos K, M, B"""
-    if pd.isna(numero) or numero is None:
-        return "N/A"
-    
-    try:
-        numero = float(numero)
-        if abs(numero) >= 1_000_000_000:
-            return formatar_br(numero / 1_000_000_000, casas_decimais) + " bi"
-        elif abs(numero) >= 1_000_000:
-            return formatar_br(numero / 1_000_000, casas_decimais) + " mi"
-        elif abs(numero) >= 1_000:
-            return formatar_br(numero / 1_000, casas_decimais) + " mil"
-        else:
-            return formatar_br(numero, casas_decimais)
     except:
         return str(numero)
 
@@ -224,24 +199,6 @@ def buscar_todas_linhas_municipio(df, municipio_nome, coluna_municipio):
     resultados = df_temp[mask].copy()
     
     return resultados
-
-def traduzir_destino(destino):
-    """Traduz códigos de destino para descrições legíveis"""
-    if pd.isna(destino):
-        return "Não informado"
-    
-    destino_str = str(destino).strip()
-    
-    # Verificar se é um código numérico conhecido
-    if destino_str in MAPEAMENTO_DESTINOS:
-        return MAPEAMENTO_DESTINOS[destino_str]
-    
-    # Se for um código numérico não mapeado
-    if destino_str.isdigit():
-        return f"Código {destino_str} (não mapeado)"
-    
-    # Manter o texto original
-    return destino_str
 
 def calcular_simulacao(massa_anual, cenario):
     """Calcula a simulação de cenários de destinação de resíduos"""
@@ -502,32 +459,29 @@ def main():
                             for tipo in tipos_coleta:
                                 st.markdown(f"- {tipo}")
                     
-                    # Destinos Finais - APENAS LISTAR, SEM CLASSIFICAÇÃO
+                    # Destinos Finais - MOSTRAR EXATAMENTE COMO ESTÁ NA PLANILHA
                     if 'Destino' in colunas:
-                        # Obter todos os destinos (incluindo duplicatas para contagem)
+                        # Obter todos os destinos (mantendo a ordem original)
                         destinos_series = dados_municipio_completo[colunas['Destino']].dropna()
                         
                         if len(destinos_series) > 0:
                             st.markdown("**Destinos Finais:**")
                             
-                            # Contar ocorrências de cada destino
+                            # Contar ocorrências de cada destino EXATO (sem agrupar códigos diferentes)
                             contador_destinos = Counter(destinos_series.astype(str))
                             
-                            # Agrupar destinos similares (com tradução)
-                            destinos_agrupados = {}
+                            # Mostrar cada destino exatamente como está, com sua contagem
                             for destino, count in contador_destinos.items():
-                                destino_traduzido = traduzir_destino(destino)
-                                if destino_traduzido in destinos_agrupados:
-                                    destinos_agrupados[destino_traduzido] += count
-                                else:
-                                    destinos_agrupados[destino_traduzido] = count
-                            
-                            # Exibir cada destino com contagem (sem classificação)
-                            for destino_traduzido, count in destinos_agrupados.items():
+                                if pd.isna(destino) or destino == "nan":
+                                    continue
+                                    
+                                destino_str = str(destino).strip()
+                                
+                                # Mostrar com contagem apenas se for maior que 1
                                 if count > 1:
-                                    st.markdown(f"- **{destino_traduzido}** (aparece {formatar_br(count, 0)} vezes)")
+                                    st.markdown(f"- **{destino_str}** (aparece {formatar_br(count, 0)} vezes)")
                                 else:
-                                    st.markdown(f"- **{destino_traduzido}**")
+                                    st.markdown(f"- **{destino_str}**")
             
             with col_info2:
                 st.subheader("📊 Dados Quantitativos")
@@ -616,13 +570,9 @@ def main():
                         if col in dados_municipio_completo.columns:
                             colunas_para_mostrar.append(col)
                     
-                    # Adicionar índice e destino traduzido
+                    # Adicionar índice
                     dados_display = dados_municipio_completo[colunas_para_mostrar].copy()
                     dados_display.insert(0, 'Nº', range(1, len(dados_display) + 1))
-                    
-                    # Adicionar coluna com destino traduzido
-                    if 'Destino' in colunas:
-                        dados_display['Destino_Traduzido'] = dados_display[colunas['Destino']].apply(traduzir_destino)
                     
                     # Formatar colunas numéricas no padrão brasileiro
                     for col in dados_display.columns:
@@ -632,6 +582,9 @@ def main():
                                 dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
                             elif 'Massa' in str(col) or 'massa' in str(col).lower():
                                 dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 1) if pd.notna(x) else x)
+                            else:
+                                # Para outras colunas numéricas, usar 0 casas decimais
+                                dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
                     
                     st.dataframe(dados_display, use_container_width=True)
             
@@ -758,12 +711,7 @@ def main():
         - População: Coluna J (Col_9) - População municipal
         - Tipo de Coleta: Coluna R (Col_17)
         - Massa Total: Coluna Y (Col_24) - "Massa de resíduos sólidos total coletada para a rota cadastrada"
-        - Destino: Coluna AC (Col_28)
-        
-        **Tradução de códigos de destino:**
-        - 3518859: Aterro controlado
-        - 3543402: Unidade de triagem (galpão ou usina)
-        - Outros códigos são exibidos como "Código XXXX (não mapeado)"
+        - Destino: Coluna AC (Col_28) - Destino final dos resíduos
         
         **Cálculo per capita:**
         - Quando disponível: usa população real da coluna J
@@ -804,7 +752,7 @@ def main():
     st.markdown("""
     <div style='text-align: center'>
         <p>Desenvolvido para análise de dados SINISA 2023 | Dados: Sistema Nacional de Informações sobre Saneamento</p>
-        <p>Última atualização: Janeiro 2026 | Versão 2.6</p>
+        <p>Última atualização: Janeiro 2026 | Versão 2.7</p>
     </div>
     """, unsafe_allow_html=True)
 
