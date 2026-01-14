@@ -205,45 +205,96 @@ def buscar_todas_linhas_municipio(df, municipio_nome, coluna_municipio):
 def calcular_simulacao(massa_anual, cenario):
     """Calcula a simulação de cenários de destinação de resíduos"""
     
+    # Fatores de emissão por tipo de destinação (t CO₂eq/t resíduo)
+    fatores_emissao = {
+        'Aterro': 0.80,
+        'Reciclagem': 0.15,
+        'Compostagem': 0.10
+    }
+    
+    # Valores econômicos (R$/tonelada)
+    valores_economicos = {
+        'Reciclagem': 250,  # R$/t de materiais recicláveis
+        'Compostagem': 150,  # R$/t de composto orgânico
+        'Carbono': 50,      # US$/t CO₂eq (convertido abaixo)
+    }
+    
     cenarios = {
         "Cenário Atual": {
             'Aterro': 0.85,
             'Reciclagem': 0.08,
             'Compostagem': 0.07,
-            'Emissões (t CO₂eq)': massa_anual * 0.8,
-            'Redução vs Atual': '0%',
+            'descricao': 'Baseado em médias brasileiras atuais',
             'cor': '#e74c3c',
-            'descricao': 'Baseado em médias brasileiras atuais'
+            'melhorias': [
+                'Baixa taxa de reciclagem',
+                'Alto índice de aterramento',
+                'Pouco aproveitamento de orgânicos'
+            ]
         },
         "Cenário de Economia Circular": {
             'Aterro': 0.40,
             'Reciclagem': 0.35,
             'Compostagem': 0.25,
-            'Emissões (t CO₂eq)': massa_anual * 0.4,
-            'Redução vs Atual': '50%',
+            'descricao': 'Aumento significativo de reciclagem e compostagem',
             'cor': '#3498db',
-            'descricao': 'Aumento significativo de reciclagem e compostagem'
+            'melhorias': [
+                'Reciclagem ampliada',
+                'Compostagem em escala',
+                'Redução de aterro em 45%'
+            ]
         },
         "Cenário Otimizado (Máxima Reciclagem)": {
             'Aterro': 0.20,
             'Reciclagem': 0.45,
             'Compostagem': 0.35,
-            'Emissões (t CO₂eq)': massa_anual * 0.2,
-            'Redução vs Atual': '75%',
+            'descricao': 'Máxima recuperação de materiais',
             'cor': '#2ecc71',
-            'descricao': 'Máxima recuperação de materiais'
+            'melhorias': [
+                'Máxima recuperação de recicláveis',
+                'Alta taxa de compostagem',
+                'Redução de aterro em 65%'
+            ]
         }
     }
     
-    return cenarios[cenario]
+    dados = cenarios[cenario].copy()
+    
+    # Calcular massa por destino
+    dados['Massa_Aterro'] = massa_anual * dados['Aterro']
+    dados['Massa_Reciclagem'] = massa_anual * dados['Reciclagem']
+    dados['Massa_Compostagem'] = massa_anual * dados['Compostagem']
+    
+    # Calcular emissões
+    dados['Emissões (t CO₂eq)'] = (
+        dados['Massa_Aterro'] * fatores_emissao['Aterro'] +
+        dados['Massa_Reciclagem'] * fatores_emissao['Reciclagem'] +
+        dados['Massa_Compostagem'] * fatores_emissao['Compostagem']
+    )
+    
+    # Calcular emissões do cenário atual para comparação
+    emissao_atual = massa_anual * 0.80  # Cenário atual padrão
+    dados['Redução Absoluta'] = emissao_atual - dados['Emissões (t CO₂eq)']
+    dados['Redução Percentual'] = (dados['Redução Absoluta'] / emissao_atual) * 100 if emissao_atual > 0 else 0
+    
+    # Calcular benefícios econômicos
+    dados['Valor_Reciclagem_R$'] = dados['Massa_Reciclagem'] * valores_economicos['Reciclagem']
+    dados['Valor_Compostagem_R$'] = dados['Massa_Compostagem'] * valores_economicos['Compostagem']
+    dados['Valor_Carbono_US$'] = dados['Redução Absoluta'] * valores_economicos['Carbono']
+    dados['Valor_Carbono_R$'] = dados['Valor_Carbono_US$'] * 5  # Conversão USD para BRL
+    
+    # Valor total econômico
+    dados['Valor_Total_R$'] = dados['Valor_Reciclagem_R$'] + dados['Valor_Compostagem_R$'] + dados['Valor_Carbono_R$']
+    
+    return dados
 
-def criar_graficos_simulacao(massa_anual, cenario):
-    """Cria gráficos para visualização da simulação"""
+def criar_graficos_simulacao_ampliados(massa_anual, cenario):
+    """Cria gráficos ampliados para visualização da simulação"""
     
     fracoes = calcular_simulacao(massa_anual, cenario)
     
-    # Criar figura com subplots
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+    # Criar figura com subplots - 3x2 para mais gráficos
+    fig, axes = plt.subplots(3, 2, figsize=(16, 18))
     
     # Configurar formatação brasileira nos gráficos
     def formatar_br_grafico(x, p):
@@ -256,7 +307,7 @@ def criar_graficos_simulacao(massa_anual, cenario):
         else:
             return formatar_br(x, 0)
     
-    # Gráfico 1: Destinação atual vs proposta
+    # Gráfico 1 (0,0): Destinação atual vs proposta
     destinos = ['Aterro', 'Reciclagem', 'Compostagem']
     valores_atual = [0.85, 0.08, 0.07]
     valores_cenario = [fracoes['Aterro'], fracoes['Reciclagem'], fracoes['Compostagem']]
@@ -264,6 +315,7 @@ def criar_graficos_simulacao(massa_anual, cenario):
     x = np.arange(len(destinos))
     width = 0.35
     
+    ax1 = axes[0, 0]
     ax1.bar(x - width/2, valores_atual, width, label='Cenário Atual', color='#95a5a6')
     ax1.bar(x + width/2, valores_cenario, width, label=cenario, color=fracoes['cor'])
     ax1.set_ylabel('Proporção')
@@ -272,11 +324,10 @@ def criar_graficos_simulacao(massa_anual, cenario):
     ax1.set_xticklabels(destinos)
     ax1.legend()
     ax1.grid(True, alpha=0.3)
-    
-    # Formatar eixo y como porcentagem
     ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.0%}'))
     
-    # Gráfico 2: Emissões por cenário
+    # Gráfico 2 (0,1): Emissões por cenário
+    ax2 = axes[0, 1]
     cenarios_nomes = ['Atual', 'Econ. Circular', 'Otimizado']
     emissões = [massa_anual * 0.8, massa_anual * 0.4, massa_anual * 0.2]
     cores = ['#e74c3c', '#3498db', '#2ecc71']
@@ -285,8 +336,6 @@ def criar_graficos_simulacao(massa_anual, cenario):
     ax2.set_ylabel('Emissões de CO₂eq (t/ano)')
     ax2.set_title('Emissões de GEE por Cenário')
     ax2.grid(True, alpha=0.3)
-    
-    # Formatar eixo y no padrão brasileiro
     ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: formatar_br(y, 0)))
     
     for bar in bars:
@@ -294,7 +343,8 @@ def criar_graficos_simulacao(massa_anual, cenario):
         ax2.text(bar.get_x() + bar.get_width()/2, height,
                 f'{formatar_br(height, 0)}', ha='center', va='bottom', fontweight='bold')
     
-    # Gráfico 3: Potencial de reciclagem
+    # Gráfico 3 (1,0): Potencial de reciclagem
+    ax3 = axes[1, 0]
     labels = ['Recicláveis Recuperáveis', 'Orgânicos Compostáveis', 'Rejeito']
     sizes = [fracoes['Reciclagem'] * 100, fracoes['Compostagem'] * 100, fracoes['Aterro'] * 100]
     colors = ['#3498db', '#2ecc71', '#e74c3c']
@@ -302,31 +352,75 @@ def criar_graficos_simulacao(massa_anual, cenario):
     ax3.pie(sizes, labels=labels, colors=colors, autopct=lambda p: f'{p:.1f}%', startangle=90)
     ax3.set_title(f'Potencial de Valorização - {cenario}')
     
-    # Gráfico 4: Valor econômico do carbono
-    if fracoes['Redução vs Atual'] != '0%':
-        reducao_absoluta = (massa_anual * 0.8) - fracoes['Emissões (t CO₂eq)']
-        valor_carbono_usd = reducao_absoluta * 50  # US$ 50/ton
-        valor_carbono_brl = valor_carbono_usd * 5  # R$ 5/US$
+    # Gráfico 4 (1,1): Valor econômico
+    ax4 = axes[1, 1]
+    if fracoes['Redução Percentual'] > 0:
+        categorias = ['Redução de GEE', 'Valor Reciclagem', 'Valor Compostagem', 'Valor Total']
+        valores = [fracoes['Redução Absoluta'], fracoes['Valor_Reciclagem_R$'], 
+                  fracoes['Valor_Compostagem_R$'], fracoes['Valor_Total_R$']]
+        cores_barras = ['#2ecc71', '#3498db', '#9b59b6', '#f39c12']
         
-        categorias = ['Redução de GEE', 'Valor (US$)', 'Valor (R$)']
-        valores = [reducao_absoluta, valor_carbono_usd, valor_carbono_brl]
-        unidades = ['t CO₂eq', 'US$/ano', 'R$/ano']
-        
-        bars = ax4.bar(categorias, valores, color=['#2ecc71', '#3498db', '#9b59b6'])
-        ax4.set_title('Valor Econômico do Carbono Evitado')
+        bars = ax4.bar(categorias, valores, color=cores_barras)
+        ax4.set_ylabel('Valor (R$)')
+        ax4.set_title('Valor Econômico Anual')
         ax4.grid(True, alpha=0.3)
-        
-        # Formatar eixo y no padrão brasileiro
         ax4.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: formatar_br(y, 0)))
         
-        for i, (bar, val, unid) in enumerate(zip(bars, valores, unidades)):
+        for i, (bar, val) in enumerate(zip(bars, valores)):
             height = bar.get_height()
             ax4.text(bar.get_x() + bar.get_width()/2, height,
-                    f'{formatar_br(val, 0)} {unid}', ha='center', va='bottom', fontweight='bold')
+                    f'R$ {formatar_br(val, 0)}', ha='center', va='bottom', 
+                    fontweight='bold', fontsize=9)
     else:
         ax4.text(0.5, 0.5, 'Sem redução de emissões\nno cenário atual',
                 ha='center', va='center', transform=ax4.transAxes, fontsize=12)
         ax4.set_title('Valor do Carbono')
+    
+    # Gráfico 5 (2,0): Comparação entre cenários (stacked)
+    ax5 = axes[2, 0]
+    cenarios_comparacao = ['Atual', 'Economia\nCircular', 'Otimizado']
+    dados_stack = {
+        'Aterro': [85, 40, 20],
+        'Reciclagem': [8, 35, 45],
+        'Compostagem': [7, 25, 35]
+    }
+    
+    bottom = np.zeros(3)
+    for destino, valores in dados_stack.items():
+        ax5.bar(cenarios_comparacao, valores, bottom=bottom, label=destino, 
+               color={'Aterro': '#e74c3c', 'Reciclagem': '#3498db', 'Compostagem': '#2ecc71'}[destino])
+        bottom += valores
+    
+    ax5.set_ylabel('Percentual (%)')
+    ax5.set_title('Comparação entre Cenários')
+    ax5.legend()
+    ax5.grid(True, alpha=0.3)
+    
+    # Gráfico 6 (2,1): Impacto ambiental
+    ax6 = axes[2, 1]
+    if fracoes['Redução Percentual'] > 0:
+        # Calcular impactos ambientais
+        arvores = int(fracoes['Redução Absoluta'] * 1000 / 22)  # 22 kg CO₂ por árvore/ano
+        carros = int(fracoes['Redução Absoluta'] / 2)  # 2 t CO₂ por carro/ano
+        energia = fracoes['Massa_Reciclagem'] * 0.95 * 14  # 14 MWh por tonelada
+        
+        categorias_impacto = ['Árvores Plantadas', 'Carros Retirados', 'Energia Economizada']
+        valores_impacto = [arvores, carros, energia]
+        unidades = ['árvores', 'carros', 'MWh']
+        
+        bars = ax6.bar(categorias_impacto, valores_impacto, color=['#27ae60', '#8e44ad', '#f1c40f'])
+        ax6.set_title('Impacto Ambiental Equivalente')
+        ax6.grid(True, alpha=0.3)
+        
+        for i, (bar, val, unid) in enumerate(zip(bars, valores_impacto, unidades)):
+            height = bar.get_height()
+            ax6.text(bar.get_x() + bar.get_width()/2, height,
+                    f'{formatar_br(val, 0)} {unid}', ha='center', va='bottom', 
+                    fontweight='bold', fontsize=9)
+    else:
+        ax6.text(0.5, 0.5, 'Sem redução de emissões\npara calcular impacto',
+                ha='center', va='center', transform=ax6.transAxes, fontsize=12)
+        ax6.set_title('Impacto Ambiental')
     
     plt.tight_layout()
     return fig
@@ -535,56 +629,6 @@ def main():
                             
                             for _, row in detalhes_coleta.iterrows():
                                 st.markdown(f"- {row[colunas['Tipo_Coleta']]}: {formatar_br(row['Massa_Total'], 1)} t")
-                        
-                        # Simulação de cenários
-                        st.subheader("🔮 Simulação de Cenários")
-                        
-                        # Criar gráficos
-                        fig = criar_graficos_simulacao(massa_total_municipio, cenario)
-                        st.pyplot(fig)
-                        
-                        # Detalhes da simulação
-                        fracoes = calcular_simulacao(massa_total_municipio, cenario)
-                        
-                        col_res1, col_res2, col_res3 = st.columns(3)
-                        
-                        with col_res1:
-                            materiais_reciclaveis = massa_total_municipio * fracoes['Reciclagem']
-                            st.metric("Materiais Recicláveis", 
-                                    f"{formatar_br(materiais_reciclaveis, 0)} t/ano")
-                        
-                        with col_res2:
-                            compostagem = massa_total_municipio * fracoes['Compostagem']
-                            st.metric("Compostagem", 
-                                    f"{formatar_br(compostagem, 0)} t/ano")
-                        
-                        with col_res3:
-                            st.metric("Emissões de GEE", 
-                                    f"{formatar_br(fracoes['Emissões (t CO₂eq)'], 0)} t CO₂eq/ano")
-                        
-                        # Valor econômico se houver redução
-                        if fracoes['Redução vs Atual'] != '0%':
-                            st.success(f"**Redução de emissões:** {fracoes['Redução vs Atual']}")
-                    else:
-                        st.warning("Dados de massa não disponíveis ou zerados para este município.")
-                else:
-                    st.error("Coluna de massa não identificada.")
-            
-            # DEBUG: Verificar mapeamento
-            if modo_detalhado:
-                with st.expander("🔍 Debug - Verificar Mapeamento de Colunas"):
-                    st.write("Colunas mapeadas:")
-                    for tipo, col in colunas.items():
-                        st.write(f"**{tipo}**: {col}")
-                    
-                    if len(dados_municipio_completo) > 0:
-                        st.write("\n**Primeiro registro completo:**")
-                        primeiro_registro = dados_municipio_completo.iloc[0]
-                        
-                        # Mostrar apenas as colunas mapeadas
-                        for tipo, col in colunas.items():
-                            if col in primeiro_registro:
-                                st.write(f"**{tipo} ({col})**: {primeiro_registro[col]}")
             
             # TABELA DE RELAÇÃO ENTRE TIPO DE COLETA, DESTINO E AGENTE EXECUTOR - SEM SECRETARIA
             st.subheader("📋 Relação: Tipo de Coleta → Destino Final → Agente Executor")
@@ -685,6 +729,172 @@ def main():
                                 st.write(f"Erro ao formatar coluna {col}: {str(e)}")
                     
                     st.dataframe(dados_display, use_container_width=True)
+            
+            # SEÇÃO AMPLIADA: SIMULAÇÃO DE CENÁRIOS
+            st.subheader("🔮 Simulação de Cenários Avançada")
+            
+            # Container principal da simulação
+            with st.container():
+                # Informações do cenário selecionado
+                fracoes = calcular_simulacao(massa_total_municipio, cenario)
+                
+                # Layout em 4 colunas para métricas principais
+                col_met1, col_met2, col_met3, col_met4 = st.columns(4)
+                
+                with col_met1:
+                    st.metric("Materiais Recicláveis", 
+                             f"{formatar_br(fracoes['Massa_Reciclagem'], 0)} t/ano",
+                             f"{fracoes['Reciclagem']*100:.1f}% do total")
+                
+                with col_met2:
+                    st.metric("Compostagem", 
+                             f"{formatar_br(fracoes['Massa_Compostagem'], 0)} t/ano",
+                             f"{fracoes['Compostagem']*100:.1f}% do total")
+                
+                with col_met3:
+                    st.metric("Emissões de GEE", 
+                             f"{formatar_br(fracoes['Emissões (t CO₂eq)'], 0)} t CO₂eq/ano")
+                
+                with col_met4:
+                    if fracoes['Redução Percentual'] > 0:
+                        st.metric("Redução de Emissões", 
+                                 f"{fracoes['Redução Percentual']:.1f}%",
+                                 f"{formatar_br(fracoes['Redução Absoluta'], 0)} t CO₂eq")
+                    else:
+                        st.metric("Redução de Emissões", "0%", "Cenário atual")
+                
+                # Separador
+                st.markdown("---")
+                
+                # GRÁFICOS AMPLIADOS (6 gráficos em 3x2)
+                st.markdown("##### 📊 Visualização Completa da Simulação")
+                fig_ampliada = criar_graficos_simulacao_ampliados(massa_total_municipio, cenario)
+                st.pyplot(fig_ampliada)
+                
+                # Separador
+                st.markdown("---")
+                
+                # TABELA COMPARATIVA DOS CENÁRIOS
+                st.markdown("##### 📋 Comparativo entre Cenários")
+                
+                # Dados para tabela comparativa
+                cenarios_comparar = ["Cenário Atual", "Cenário de Economia Circular", "Cenário Otimizado (Máxima Reciclagem)"]
+                dados_comparativos = []
+                
+                for cenario_comp in cenarios_comparar:
+                    dados_comp = calcular_simulacao(massa_total_municipio, cenario_comp)
+                    dados_comparativos.append({
+                        'Cenário': cenario_comp,
+                        'Aterro (%)': f"{dados_comp['Aterro']*100:.1f}",
+                        'Reciclagem (%)': f"{dados_comp['Reciclagem']*100:.1f}",
+                        'Compostagem (%)': f"{dados_comp['Compostagem']*100:.1f}",
+                        'Emissões (t CO₂eq)': formatar_br(dados_comp['Emissões (t CO₂eq)'], 0),
+                        'Redução (%)': f"{dados_comp['Redução Percentual']:.1f}" if dados_comp['Redução Percentual'] > 0 else "0,0",
+                        'Valor Total (R$)': formatar_br(dados_comp['Valor_Total_R$'], 0)
+                    })
+                
+                df_comparativo = pd.DataFrame(dados_comparativos)
+                
+                # Destacar o cenário selecionado
+                def highlight_selected(row):
+                    if row['Cenário'] == cenario:
+                        return ['background-color: #2ecc71; color: white'] * len(row)
+                    return [''] * len(row)
+                
+                st.dataframe(df_comparativo.style.apply(highlight_selected, axis=1), use_container_width=True)
+                
+                # Separador
+                st.markdown("---")
+                
+                # BENEFÍCIOS ECONÔMICOS DETALHADOS
+                st.markdown("##### 💰 Benefícios Econômicos Detalhados")
+                
+                if fracoes['Redução Percentual'] > 0:
+                    col_ben1, col_ben2, col_ben3, col_ben4 = st.columns(4)
+                    
+                    with col_ben1:
+                        st.metric("Valor da Reciclagem", 
+                                 f"R$ {formatar_br(fracoes['Valor_Reciclagem_R$'], 0)}",
+                                 "R$ 250 por tonelada")
+                    
+                    with col_ben2:
+                        st.metric("Valor da Compostagem", 
+                                 f"R$ {formatar_br(fracoes['Valor_Compostagem_R$'], 0)}",
+                                 "R$ 150 por tonelada")
+                    
+                    with col_ben3:
+                        st.metric("Valor do Carbono", 
+                                 f"R$ {formatar_br(fracoes['Valor_Carbono_R$'], 0)}",
+                                 "US$ 50 por t CO₂eq")
+                    
+                    with col_ben4:
+                        st.metric("Benefício Total", 
+                                 f"R$ {formatar_br(fracoes['Valor_Total_R$'], 0)}/ano",
+                                 "Economia anual")
+                
+                # Separador
+                st.markdown("---")
+                
+                # IMPACTO AMBIENTAL
+                st.markdown("##### 🌱 Impacto Ambiental")
+                
+                col_imp1, col_imp2, col_imp3 = st.columns(3)
+                
+                with col_imp1:
+                    # Equivalente em árvores plantadas (cada árvore absorve ~22 kg CO₂/ano)
+                    arvores_equivalentes = int(fracoes['Redução Absoluta'] * 1000 / 22) if fracoes['Redução Absoluta'] > 0 else 0
+                    st.metric("Equivalente em Árvores", 
+                             f"{formatar_br(arvores_equivalentes, 0)}",
+                             "Árvores necessárias para absorver CO₂")
+                
+                with col_imp2:
+                    # Equivalente em carros fora das ruas (cada carro emite ~2 t CO₂/ano)
+                    carros_equivalentes = int(fracoes['Redução Absoluta'] / 2) if fracoes['Redução Absoluta'] > 0 else 0
+                    st.metric("Equivalente em Carros", 
+                             f"{formatar_br(carros_equivalentes, 0)}",
+                             "Carros retirados das ruas")
+                
+                with col_imp3:
+                    # Economia de energia (reciclagem economiza ~95% de energia)
+                    energia_economizada = fracoes['Massa_Reciclagem'] * 0.95 * 14  # 14 MWh por tonelada reciclada
+                    st.metric("Energia Economizada", 
+                             f"{formatar_br(energia_economizada, 0)} MWh",
+                             "Pela reciclagem de materiais")
+                
+                # Separador
+                st.markdown("---")
+                
+                # DETALHES TÉCNICOS E METODOLOGIA
+                with st.expander("📚 Detalhes Técnicos da Simulação"):
+                    st.markdown(f"""
+                    **Metodologia da Simulação:**
+                    
+                    **1. Fatores de Emissão (t CO₂eq/t resíduo):**
+                    - Aterro sanitário: 0,80 t CO₂eq/t
+                    - Reciclagem: 0,15 t CO₂eq/t
+                    - Compostagem: 0,10 t CO₂eq/t
+                    
+                    **2. Valores Econômicos:**
+                    - Materiais recicláveis: R$ 250 por tonelada
+                    - Composto orgânico: R$ 150 por tonelada
+                    - Crédito de carbono: US$ 50 por t CO₂eq (R$ 5/US$)
+                    
+                    **3. Cenários Analisados:**
+                    - **Atual:** {formatar_br(massa_total_municipio * 0.85, 0)} t para aterro, {formatar_br(massa_total_municipio * 0.08, 0)} t recicláveis
+                    - **Economia Circular:** Redução de 45% no aterro, aumento de 337% na reciclagem
+                    - **Otimizado:** Redução de 65% no aterro, aumento de 463% na reciclagem
+                    
+                    **4. Benefícios Calculados:**
+                    - Valor total anual: R$ {formatar_br(fracoes['Valor_Total_R$'], 0)}
+                    - Redução de emissões: {fracoes['Redução Percentual']:.1f}%
+                    - Emissões evitadas: {formatar_br(fracoes['Redução Absoluta'], 0)} t CO₂eq/ano
+                    
+                    **5. Premissas:**
+                    - Baseado em dados SINISA 2023
+                    - Fatores IPCC para resíduos sólidos urbanos
+                    - Valores de mercado médios brasileiros
+                    - Câmbio: R$ 5,00 por US$ 1,00
+                    """)
             
         else:
             st.warning(f"Município '{municipio_selecionado}' não encontrado nos dados.")
@@ -864,7 +1074,7 @@ def main():
     st.markdown("""
     <div style='text-align: center'>
         <p>Desenvolvido para análise de dados SINISA 2023 | Dados: Sistema Nacional de Informações sobre Saneamento</p>
-        <p>Última atualização: Janeiro 2026 | Versão 3.2</p>
+        <p>Última atualização: Janeiro 2026 | Versão 4.0</p>
     </div>
     """, unsafe_allow_html=True)
 
