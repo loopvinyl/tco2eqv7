@@ -459,10 +459,34 @@ def main():
                             for tipo in tipos_coleta:
                                 st.markdown(f"- {tipo}")
                     
-                    # Destinos Finais - MOSTRAR EXATAMENTE COMO ESTÁ NA COLUNA AC
-                    if 'Destino' in colunas and colunas['Destino'] in dados_municipio_completo.columns:
-                        # Obter valores da coluna AC (Destino)
-                        destinos = dados_municipio_completo[colunas['Destino']].dropna()
+                    # Destinos Finais - IDENTIFICAR COLUNA CORRETA PARA DESTINO
+                    if 'Destino' in colunas:
+                        # Primeiro, verificar se a coluna identificada como 'Destino' tem códigos ou texto
+                        destinos_coluna = dados_municipio_completo[colunas['Destino']].dropna()
+                        
+                        # Verificar se os valores parecem códigos (apenas números)
+                        if len(destinos_coluna) > 0 and all(str(x).isdigit() for x in destinos_coluna.head() if pd.notna(x)):
+                            # Se são códigos, buscar a coluna de texto correspondente
+                            # Procurar por colunas que contenham texto de destino
+                            colunas_candidatas = []
+                            for col in dados_municipio_completo.columns:
+                                # Verificar se a coluna contém texto de destinos conhecidos
+                                amostra = dados_municipio_completo[col].dropna().astype(str).head(10)
+                                textos_destino = ['Aterro controlado', 'Unidade de triagem', 'Unidade de manejo', 
+                                                 'galpão', 'usina', 'áreas verdes', 'galhadas', 'podas']
+                                if any(any(texto in valor for texto in textos_destino) for valor in amostra):
+                                    colunas_candidatas.append(col)
+                            
+                            if colunas_candidatas:
+                                # Usar a primeira coluna candidata encontrada
+                                coluna_destino_texto = colunas_candidatas[0]
+                                destinos = dados_municipio_completo[coluna_destino_texto].dropna()
+                            else:
+                                # Se não encontrar, usar a coluna original (códigos)
+                                destinos = destinos_coluna
+                        else:
+                            # Se não são códigos, usar diretamente
+                            destinos = destinos_coluna
                         
                         if len(destinos) > 0:
                             st.markdown("**Destinos Finais:**")
@@ -483,6 +507,8 @@ def main():
                                     st.markdown(f"- **{destino_limpo}** (aparece {formatar_br(count, 0)} vezes)")
                                 else:
                                     st.markdown(f"- **{destino_limpo}**")
+                        else:
+                            st.markdown("*Destinos não informados*")
             
             with col_info2:
                 st.subheader("📊 Dados Quantitativos")
@@ -612,6 +638,8 @@ def main():
                 st.write("Colunas disponíveis:")
                 for i, col in enumerate(df.columns):
                     st.write(f"{i}: {col}")
+                st.write("Primeiras linhas do DataFrame:")
+                st.write(df.head())
     
     # Análise comparativa por estado
     if 'Estado' in colunas and 'Massa_Total' in colunas:
@@ -753,7 +781,7 @@ def main():
     st.markdown("""
     <div style='text-align: center'>
         <p>Desenvolvido para análise de dados SINISA 2023 | Dados: Sistema Nacional de Informações sobre Saneamento</p>
-        <p>Última atualização: Janeiro 2026 | Versão 2.8</p>
+        <p>Última atualização: Janeiro 2026 | Versão 2.9</p>
     </div>
     """, unsafe_allow_html=True)
 
