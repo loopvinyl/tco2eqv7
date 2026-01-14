@@ -24,6 +24,28 @@ st.markdown("""
 # URL do arquivo Excel
 EXCEL_URL = "https://github.com/loopvinyl/tco2eqv7/raw/main/rsuBrasil.xlsx"
 
+# Mapeamento dos códigos de destino final
+MAPEAMENTO_DESTINOS = {
+    '3518859': 'Aterro controlado',
+    '3543402': 'Unidade de triagem (galpão ou usina)',
+    'outros_codigos': {}  # Pode ser expandido conforme necessário
+}
+
+# Classificação dos destinos
+CLASSIFICACAO_DESTINOS = {
+    'Destinação Adequada': [
+        'aterro sanitário', 'compostagem', 'reciclagem', 'triagem',
+        'unidade de triagem', 'aterro sanitario', 'usina de triagem'
+    ],
+    'Destinação a Melhorar': [
+        'aterro controlado', 'lixão', 'lixao', 'aterro'
+    ],
+    'Outros Destinos': [
+        'unidade de manejo de resíduos de áreas verdes',
+        'galhadas e podas', 'áreas verdes'
+    ]
+}
+
 @st.cache_data(ttl=3600)
 def carregar_dados_completos():
     """
@@ -167,6 +189,51 @@ def buscar_todas_linhas_municipio(df, municipio_nome, coluna_municipio):
     resultados = df_temp[mask].copy()
     
     return resultados
+
+def traduzir_destino(destino):
+    """Traduz códigos de destino para descrições legíveis"""
+    if pd.isna(destino):
+        return "Não informado"
+    
+    destino_str = str(destino).strip()
+    
+    # Verificar se é um código numérico conhecido
+    if destino_str in MAPEAMENTO_DESTINOS:
+        return MAPEAMENTO_DESTINOS[destino_str]
+    
+    # Se for um código numérico não mapeado
+    if destino_str.isdigit():
+        return f"Código {destino_str} (não mapeado)"
+    
+    # Manter o texto original
+    return destino_str
+
+def classificar_destino(destino_descricao):
+    """Classifica o destino em categorias"""
+    desc_lower = str(destino_descricao).lower()
+    
+    # Verificar Destinação Adequada
+    for termo in CLASSIFICACAO_DESTINOS['Destinação Adequada']:
+        if termo in desc_lower:
+            return "Destinação Adequada"
+    
+    # Verificar Destinação a Melhorar
+    for termo in CLASSIFICACAO_DESTINOS['Destinação a Melhorar']:
+        if termo in desc_lower:
+            return "Destinação a Melhorar"
+    
+    # Verificar Outros Destinos específicos
+    for termo in CLASSIFICACAO_DESTINOS['Outros Destinos']:
+        if termo in desc_lower:
+            return "Outros Destinos"
+    
+    # Classificação padrão
+    if any(term in desc_lower for term in ['triagem', 'compostagem', 'reciclagem']):
+        return "Destinação Adequada"
+    elif any(term in desc_lower for term in ['aterro', 'lixão', 'lixao']):
+        return "Destinação a Melhorar"
+    else:
+        return "Outros Destinos"
 
 def calcular_simulacao(massa_anual, cenario):
     """Calcula a simulação de cenários de destinação de resíduos"""
@@ -407,25 +474,61 @@ def main():
                             for tipo in tipos_coleta:
                                 st.markdown(f"- {tipo}")
                     
-                    # Destinos Finais (mostrar todos)
+                    # Destinos Finais (mostrar todos com tradução e classificação)
                     if 'Destino' in colunas:
                         destinos = dados_municipio_completo[colunas['Destino']].dropna().unique()
                         if len(destinos) > 0:
                             st.markdown("**Destinos Finais:**")
+                            
+                            # Contadores para estatísticas
+                            contagem_tipos = {
+                                "Destinação Adequada": 0,
+                                "Destinação a Melhorar": 0,
+                                "Outros Destinos": 0,
+                                "Não Classificado": 0
+                            }
+                            
                             for destino in destinos:
-                                # Verificar se é numérico (código) ou texto
-                                if str(destino).isdigit():
-                                    st.markdown(f"- Código: {destino} (verificar significado)")
+                                # Traduzir o destino
+                                destino_traduzido = traduzir_destino(destino)
+                                
+                                # Classificar o destino
+                                classificacao = classificar_destino(destino_traduzido)
+                                contagem_tipos[classificacao] = contagem_tipos.get(classificacao, 0) + 1
+                                
+                                # Determinar ícone e cor baseado na classificação
+                                if classificacao == "Destinação Adequada":
+                                    icone = "✅"
+                                    cor = "green"
+                                elif classificacao == "Destinação a Melhorar":
+                                    icone = "⚠️"
+                                    cor = "orange"
                                 else:
-                                    st.markdown(f"- {destino}")
-                                    
-                                    # Classificar destino
-                                    if any(term in str(destino).upper() for term in ['ATERRO SANITÁRIO', 'COMPOSTAGEM', 'RECICLAGEM', 'TRIAGEM']):
-                                        st.success("  ✅ Destinação adequada")
-                                    elif any(term in str(destino).upper() for term in ['ATERRO CONTROLADO', 'LIXÃO']):
-                                        st.warning("  ⚠️ Destinação a melhorar")
-                                    else:
-                                        st.info("  ℹ️ Outro tipo de destinação")
+                                    icone = "ℹ️"
+                                    cor = "blue"
+                                
+                                # Exibir destino com formatação
+                                st.markdown(f"- {icone} **{destino_traduzido}**")
+                                st.markdown(f"  <span style='color:{cor}; font-size:0.9em'>{classificacao}</span>", 
+                                          unsafe_allow_html=True)
+                            
+                            # Exibir estatísticas de classificação
+                            st.markdown("---")
+                            st.subheader("📊 Estatísticas de Destinação")
+                            
+                            col_stat1, col_stat2, col_stat3 = st.columns(3)
+                            with col_stat1:
+                                st.metric("Destinação Adequada", 
+                                         f"{contagem_tipos['Destinação Adequada']}",
+                                         f"{(contagem_tipos['Destinação Adequada']/len(destinos)*100):.1f}%")
+                            with col_stat2:
+                                st.metric("Destinação a Melhorar", 
+                                         f"{contagem_tipos['Destinação a Melhorar']}",
+                                         f"{(contagem_tipos['Destinação a Melhorar']/len(destinos)*100):.1f}%")
+                            with col_stat3:
+                                st.metric("Outros Destinos", 
+                                         f"{contagem_tipos['Outros Destinos']}",
+                                         f"{(contagem_tipos['Outros Destinos']/len(destinos)*100):.1f}%")
             
             with col_info2:
                 st.subheader("📊 Dados Quantitativos")
@@ -495,9 +598,14 @@ def main():
                         if col in dados_municipio_completo.columns:
                             colunas_para_mostrar.append(col)
                     
-                    # Adicionar índice
+                    # Adicionar índice e destino traduzido
                     dados_display = dados_municipio_completo[colunas_para_mostrar].copy()
                     dados_display.insert(0, 'Nº', range(1, len(dados_display) + 1))
+                    
+                    # Adicionar coluna com destino traduzido
+                    if 'Destino' in colunas:
+                        dados_display['Destino_Traduzido'] = dados_display[colunas['Destino']].apply(traduzir_destino)
+                        dados_display['Classificação'] = dados_display['Destino_Traduzido'].apply(classificar_destino)
                     
                     st.dataframe(dados_display, use_container_width=True)
             
@@ -605,6 +713,16 @@ def main():
         - Massa Total: Coluna Y (Col_24) - "Massa de resíduos sólidos total coletada para a rota cadastrada"
         - Destino: Coluna AC (Col_28)
         
+        **Tradução de códigos de destino:**
+        - 3518859: Aterro controlado
+        - 3543402: Unidade de triagem (galpão ou usina)
+        - Outros códigos são exibidos como "Código XXXX (não mapeado)"
+        
+        **Classificação de destinos:**
+        - ✅ Destinação Adequada: Aterro sanitário, compostagem, reciclagem, triagem
+        - ⚠️ Destinação a Melhorar: Aterro controlado, lixão
+        - ℹ️ Outros Destinos: Demais tipos de destinação
+        
         **Cálculo per capita:**
         - Média nacional: 365,21 kg/hab/ano
         - Fonte: SINISA 2023 com dados populacionais IBGE 2023
@@ -643,7 +761,7 @@ def main():
     st.markdown("""
     <div style='text-align: center'>
         <p>Desenvolvido para análise de dados SINISA 2023 | Dados: Sistema Nacional de Informações sobre Saneamento</p>
-        <p>Última atualização: Janeiro 2026 | Versão 2.2</p>
+        <p>Última atualização: Janeiro 2026 | Versão 2.3</p>
     </div>
     """, unsafe_allow_html=True)
 
