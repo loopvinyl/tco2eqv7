@@ -31,20 +31,6 @@ def carregar_dados_filtrados():
         primeira_coluna = df.columns[0]  # Primeira coluna (A)
         df_filtrado = df[df[primeira_coluna] == 'Sim'].copy()
         
-        # Renomear colunas baseado no relatório para facilitar acesso
-        mapeamento_colunas = {
-            'Col_3': 'Estado',
-            'Col_4': 'Região', 
-            'Col_17': 'Tipo_Coleta',
-            'Col_24': 'Massa_Total',
-            'Col_28': 'Destino'
-        }
-        
-        # Aplicar renomeação se as colunas existirem
-        for col_original, novo_nome in mapeamento_colunas.items():
-            if col_original in df_filtrado.columns:
-                df_filtrado.rename(columns={col_original: novo_nome}, inplace=True)
-        
         st.success(f"✅ Dados carregados com sucesso! {len(df_filtrado)} registros após filtro.")
         return df_filtrado
         
@@ -60,97 +46,107 @@ def normalizar_texto(texto):
     texto = unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
     return texto.lower().strip()
 
-def buscar_municipio_completo(df, municipio_nome):
-    """Busca um município considerando diferentes variações e retorna todos os dados"""
-    municipio_normalizado = normalizar_texto(municipio_nome)
-    
-    # Primeiro, tentar encontrar a coluna que contém os nomes dos municípios
-    colunas_candidatas = []
-    for col in df.columns:
-        col_lower = str(col).lower()
-        if any(term in col_lower for term in ['município', 'municipio', 'cidade', 'localidade', 'nome']):
-            colunas_candidatas.append(col)
-    
-    if not colunas_candidatas:
-        # Se não encontrar pelo nome, usar a coluna que parece ter nomes próprios
-        for col in df.columns:
-            # Verificar se a coluna tem valores que parecem nomes de cidades
-            amostra = df[col].dropna().head(10)
-            if len(amostra) > 0:
-                # Verificar se algum valor contém "RIBEIRÃO" ou "SÃO" etc
-                valores_str = amostra.astype(str).str.upper()
-                if any(valor in valores_str.str.cat() for valor in ['RIBEIRÃO', 'SÃO', 'JOSÉ', 'PAULO', 'PRETO']):
-                    colunas_candidatas.append(col)
-                    break
-    
-    resultados_completos = []
-    
-    for col_municipio in colunas_candidatas:
-        # Criar coluna normalizada para busca
-        df[f'{col_municipio}_normalizado'] = df[col_municipio].apply(normalizar_texto)
-        
-        # Tentar diferentes estratégias de busca
-        mask_exato = df[f'{col_municipio}_normalizado'] == municipio_normalizado
-        
-        # Buscar por partes do nome (para nomes compostos)
-        partes = municipio_normalizado.split()
-        if len(partes) > 1:
-            # Para "ribeirao preto", buscar por "ribeirao" E "preto"
-            mask_parte1 = df[f'{col_municipio}_normalizado'].str.contains(partes[0], na=False)
-            mask_parte2 = df[f'{col_municipio}_normalizado'].str.contains(partes[-1], na=False)
-            mask_partes = mask_parte1 & mask_parte2
-        else:
-            mask_partes = pd.Series(False, index=df.index)
-        
-        # Busca por "contém" (mais flexível)
-        mask_contem = df[f'{col_municipio}_normalizado'].str.contains(municipio_normalizado, na=False)
-        
-        # Combinar todas as máscaras
-        mask_total = mask_exato | mask_partes | mask_contem
-        
-        resultados = df[mask_total]
-        
-        if len(resultados) > 0:
-            for _, linha in resultados.iterrows():
-                resultados_completos.append({
-                    'dados': linha,
-                    'coluna_municipio': col_municipio,
-                    'nome_original': linha[col_municipio],
-                    'score': 2 if mask_exato.any() else 1  # Priorizar match exato
-                })
-    
-    if resultados_completos:
-        # Ordenar por score (match exato primeiro)
-        resultados_completos.sort(key=lambda x: x['score'], reverse=True)
-        return resultados_completos[0]['dados'], resultados_completos[0]['coluna_municipio']
-    
-    return None, None
-
 def identificar_colunas_principais(df):
     """Identifica automaticamente as colunas principais baseadas no relatório"""
     colunas_mapeadas = {}
     
-    # Padrões de busca para cada tipo de coluna
-    padroes = {
-        'Estado': ['estado', 'uf', 'col_3'],
-        'Região': ['região', 'regiao', 'col_4'],
-        'Tipo_Coleta': ['tipo', 'coleta', 'col_17', 'tipo de coleta'],
-        'Massa_Total': ['massa', 'total', 'col_24', 'tonelada', 'peso'],
-        'Destino': ['destino', 'col_28', 'destinação', 'destinacao'],
-        'Município': ['município', 'municipio', 'cidade', 'local']
+    st.write("🔍 **Identificando colunas no dataframe...**")
+    
+    # Mostrar todas as colunas para debug
+    with st.expander("Ver todas as colunas"):
+        for i, col in enumerate(df.columns):
+            st.write(f"{i+1}. **{col}**")
+    
+    # Padrões de busca específicos baseados no relatório
+    padroes_especificos = {
+        'Município': ['município', 'municipio', 'cidade', 'local', 'ministério das cidades', 'ribeirão preto'],
+        'Estado': ['col_3', 'estado', 'uf', 'unidade da federação'],
+        'Região': ['col_4', 'região', 'regiao', 'grande região'],
+        'Tipo_Coleta': ['col_17', 'tipo de coleta', 'tipo coleta', 'coleta'],
+        'Massa_Total': [
+            'massa de resíduos sólidos total coletada para a rota cadastrada',
+            'col_24', 
+            'massa total',
+            'massa coletada',
+            'massa de resíduos'
+        ],
+        'Destino': ['col_28', 'destino', 'destinação', 'destinacao final']
     }
     
-    for tipo, lista_padroes in padroes.items():
-        for col in df.columns:
-            col_lower = str(col).lower()
-            for padrao in lista_padroes:
-                if padrao in col_lower:
-                    colunas_mapeadas[tipo] = col
+    # Primeiro, tentar encontrar por nomes exatos das colunas do relatório
+    nomes_exatos_relatorio = {
+        'Estado': 'Col_3',
+        'Região': 'Col_4', 
+        'Tipo_Coleta': 'Col_17',
+        'Massa_Total': 'Col_24',
+        'Destino': 'Col_28'
+    }
+    
+    for tipo, nome_exato in nomes_exatos_relatorio.items():
+        if nome_exato in df.columns:
+            colunas_mapeadas[tipo] = nome_exato
+            st.success(f"✅ Coluna {tipo} encontrada como: {nome_exato}")
+    
+    # Se não encontrou pelo nome exato, buscar por padrões
+    for tipo, lista_padroes in padroes_especificos.items():
+        if tipo not in colunas_mapeadas:  # Só buscar se não encontrou ainda
+            for col in df.columns:
+                col_lower = str(col).lower()
+                for padrao in lista_padroes:
+                    if padrao in col_lower:
+                        colunas_mapeadas[tipo] = col
+                        st.info(f"🔍 Coluna {tipo} identificada por padrão: {col}")
+                        break
+                if tipo in colunas_mapeadas:
                     break
-            if tipo in colunas_mapeadas:
-                break
+    
+    # Busca especial para município (pode ser uma coluna com nome longo)
+    if 'Município' not in colunas_mapeadas:
+        # Procurar por colunas que contenham valores como "Ribeirão Preto"
+        for col in df.columns:
+            if df[col].dtype == 'object':  # Coluna de texto
+                # Verificar se tem "Ribeirão Preto" em algum valor
+                valores = df[col].astype(str).str.lower().dropna()
+                if any('ribeirão preto' in v or 'ribeirao preto' in v for v in valores):
+                    colunas_mapeadas['Município'] = col
+                    st.success(f"✅ Coluna Município identificada por conteúdo: {col}")
+                    break
     
     return colunas_mapeadas
+
+def buscar_municipio_na_coluna(df, municipio_nome, coluna_municipio):
+    """Busca um município em uma coluna específica"""
+    if coluna_municipio not in df.columns:
+        return None
+    
+    municipio_normalizado = normalizar_texto(municipio_nome)
+    df['temp_normalizado'] = df[coluna_municipio].apply(normalizar_texto)
+    
+    # Buscar exato
+    mask_exato = df['temp_normalizado'] == municipio_normalizado
+    
+    # Buscar por partes (para nomes compostos)
+    partes = municipio_normalizado.split()
+    mask_partes = pd.Series(True, index=df.index)
+    for parte in partes:
+        if len(parte) > 2:  # Ignorar preposições
+            mask_partes = mask_partes & df['temp_normalizado'].str.contains(parte, na=False)
+    
+    # Busca por contém
+    mask_contem = df['temp_normalizado'].str.contains(municipio_normalizado, na=False)
+    
+    # Combinar
+    mask_total = mask_exato | mask_partes | mask_contem
+    
+    resultados = df[mask_total]
+    
+    # Remover coluna temporária
+    df.drop(columns=['temp_normalizado'], inplace=True, errors='ignore')
+    
+    if len(resultados) > 0:
+        return resultados.iloc[0]
+    
+    return None
 
 def main():
     # Barra lateral
@@ -173,9 +169,9 @@ def main():
         )
         
         st.markdown("---")
-        st.header("📊 Filtros Avançados")
+        st.header("📊 Opções de Visualização")
         
-        mostrar_todos_dados = st.checkbox("Mostrar todos os dados do município", value=False)
+        mostrar_detalhes_colunas = st.checkbox("Mostrar detalhes das colunas", value=False)
         
         st.markdown("---")
         st.header("📈 Cenários de Simulação")
@@ -199,7 +195,17 @@ def main():
         return
     
     # Identificar colunas principais
+    st.subheader("🔍 Identificação das Colunas")
     colunas = identificar_colunas_principais(df)
+    
+    # Mostrar resumo das colunas identificadas
+    if mostrar_detalhes_colunas:
+        st.info("📋 **Colunas identificadas:**")
+        for tipo, coluna in colunas.items():
+            if coluna:
+                st.write(f"• **{tipo}:** `{coluna}`")
+            else:
+                st.write(f"• **{tipo}:** ❌ Não identificada")
     
     # Mostrar informações da base
     st.subheader("📊 Resumo da Base de Dados")
@@ -214,38 +220,36 @@ def main():
             massa_total = df[colunas['Massa_Total']].sum()
             st.metric("Massa Total Coletada", f"{massa_total:,.0f} t")
         else:
-            st.metric("Massa Total", "Coluna não identificada")
+            st.error("Massa Total: Coluna não identificada")
     
     with col3:
         if 'Estado' in colunas:
             estados_unicos = df[colunas['Estado']].nunique()
             st.metric("Estados", estados_unicos)
+        else:
+            st.warning("Estados: Coluna não identificada")
     
     with col4:
         if 'Região' in colunas:
             regioes_unicas = df[colunas['Região']].nunique()
             st.metric("Regiões", regioes_unicas)
-    
-    # Mostrar estrutura das colunas
-    with st.expander("🔍 Ver estrutura das colunas identificadas"):
-        st.write("**Colunas identificadas:**")
-        for tipo, coluna in colunas.items():
-            if coluna:
-                st.write(f"• **{tipo}:** `{coluna}`")
-            else:
-                st.write(f"• **{tipo}:** Não identificada")
-        
-        st.write("\n**Primeiras 5 linhas do dataframe:**")
-        st.dataframe(df.head())
+        else:
+            st.warning("Regiões: Coluna não identificada")
     
     # Análise do município selecionado
     st.header(f"🏙️ Análise Detalhada: {municipio_selecionado}")
     
     # Buscar dados do município
-    dados_municipio, col_municipio = buscar_municipio_completo(df, municipio_selecionado)
+    dados_municipio = None
+    coluna_municipio_encontrada = None
+    
+    if 'Município' in colunas:
+        coluna_municipio = colunas['Município']
+        dados_municipio = buscar_municipio_na_coluna(df, municipio_selecionado, coluna_municipio)
+        coluna_municipio_encontrada = coluna_municipio
     
     if dados_municipio is not None:
-        st.success(f"✅ Município encontrado na coluna: `{col_municipio}`")
+        st.success(f"✅ Município encontrado na coluna: `{coluna_municipio_encontrada}`")
         
         # Criar colunas para exibição
         col1, col2 = st.columns(2)
@@ -254,7 +258,7 @@ def main():
             st.info("📋 **Informações Identificadas**")
             
             # Nome do município
-            st.write(f"**Município:** {dados_municipio[col_municipio]}")
+            st.write(f"**Município:** {dados_municipio[coluna_municipio_encontrada]}")
             
             # Estado
             if 'Estado' in colunas and colunas['Estado'] in dados_municipio:
@@ -290,43 +294,40 @@ def main():
             # Massa Total
             if 'Massa_Total' in colunas and colunas['Massa_Total'] in dados_municipio:
                 massa = dados_municipio[colunas['Massa_Total']]
-                if pd.notna(massa) and massa > 0:
+                if pd.notna(massa):
                     st.write(f"**Massa Coletada:** {massa:,.1f} toneladas/ano")
                     
                     # Estimativa per capita (usando média nacional como referência)
-                    st.write(f"**Per capita estimado:** 365 kg/hab/ano (média nacional)")
+                    st.write(f"**Per capita (média nacional):** 365 kg/hab/ano")
                     st.write(f"**Equivalente diário:** 1.0 kg/hab/dia")
                     
                     # População estimada (baseada na massa e média nacional)
-                    populacao_estimada = (massa * 1000) / 365
-                    st.write(f"**População estimada:** {populacao_estimada:,.0f} habitantes")
+                    if massa > 0:
+                        populacao_estimada = (massa * 1000) / 365
+                        st.write(f"**População estimada:** {populacao_estimada:,.0f} habitantes")
+                    else:
+                        st.warning("Massa zerada ou negativa")
                 else:
-                    st.warning("Massa não informada ou zerada")
+                    st.warning("Massa não informada")
             else:
-                st.warning("Coluna de massa não identificada")
+                st.error("Coluna de massa não identificada nos dados do município")
+                
+                # Tentar mostrar qual coluna é a de massa
+                if 'Massa_Total' in colunas:
+                    st.write(f"Coluna de massa esperada: `{colunas['Massa_Total']}`")
+                
+                # Mostrar todas as colunas disponíveis no registro
+                with st.expander("Ver todos os dados do município"):
+                    for col, valor in dados_municipio.items():
+                        st.write(f"**{col}:** {valor}")
         
-        # Mostrar todos os dados do município se solicitado
-        if mostrar_todos_dados:
-            st.subheader("📋 Todos os Dados do Município")
-            st.write(f"Todos os dados disponíveis para {municipio_selecionado}:")
-            
-            # Converter a linha para DataFrame para melhor visualização
-            df_municipio = pd.DataFrame([dados_municipio])
-            
-            # Transpor para melhor visualização
-            df_transposto = df_municipio.transpose()
-            df_transposto.columns = ['Valor']
-            
-            st.dataframe(df_transposto)
-        
-        # Simulação de cenários
-        st.header(f"🔮 Simulação de Cenários - {cenario}")
-        
-        # Verificar se temos massa para simulação
+        # Simulação de cenários (só se tiver massa)
         if 'Massa_Total' in colunas and colunas['Massa_Total'] in dados_municipio:
             massa = dados_municipio[colunas['Massa_Total']]
             
             if pd.notna(massa) and massa > 0:
+                st.header(f"🔮 Simulação de Cenários - {cenario}")
+                
                 massa_anual = massa
                 
                 # Parâmetros por cenário
@@ -419,37 +420,44 @@ def main():
             else:
                 st.warning("Não foi possível realizar a simulação: massa não disponível ou zerada.")
         else:
-            st.warning("Não foi possível realizar a simulação: coluna de massa não identificada.")
+            st.error("Não foi possível realizar a simulação: coluna de massa não identificada.")
     
     else:
         st.warning(f"⚠️ Município '{municipio_selecionado}' não encontrado nos dados.")
         
-        # Sugerir busca alternativa
-        with st.expander("🔍 Tentar buscar município manualmente"):
-            # Listar colunas que podem conter municípios
-            colunas_possiveis = []
-            for col in df.columns:
-                if df[col].dtype == 'object':  # Colunas de texto
-                    amostra = df[col].dropna().head(5)
-                    if len(amostra) > 0:
-                        # Verificar se parece nome de município
-                        valores = amostra.astype(str).str.upper()
-                        if any(valor in ' '.join(valores) for valor in ['RIBEIRÃO', 'SÃO', 'PAULO', 'JANEIRO', 'PRETO']):
-                            colunas_possiveis.append(col)
-            
-            if colunas_possiveis:
-                st.write("**Colunas que podem conter nomes de municípios:**")
-                for col in colunas_possiveis[:5]:  # Mostrar até 5
-                    st.write(f"- `{col}`")
-                    
-                    # Mostrar alguns valores dessa coluna
-                    valores_unicos = df[col].dropna().unique()[:10]
-                    st.write(f"  Amostra: {', '.join(map(str, valores_unicos))}")
+        # Mostrar algumas colunas que podem ser de municípios
+        st.info("🔍 **Tentando identificar coluna de municípios...**")
+        
+        colunas_texto = []
+        for col in df.columns:
+            if df[col].dtype == 'object':  # Coluna de texto
+                # Verificar se tem o município procurado
+                valores = df[col].astype(str).str.lower().dropna()
+                municipio_buscado = municipio_selecionado.lower()
+                
+                # Verificar diferentes formas
+                formas = [
+                    municipio_buscado,
+                    municipio_buscado.replace('ã', 'a').replace('ç', 'c').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ú', 'u'),
+                    municipio_buscado.replace('ão', 'ao').replace('õe', 'oe')
+                ]
+                
+                for forma in formas:
+                    if any(forma in v for v in valores):
+                        colunas_texto.append(col)
+                        break
+        
+        if colunas_texto:
+            st.write("**Possíveis colunas de municípios:**")
+            for col in colunas_texto[:3]:  # Mostrar até 3
+                st.write(f"- `{col}`")
+        else:
+            st.write("**Nenhuma coluna com nomes de municípios identificada.**")
     
-    # Análise comparativa por estado
-    st.header("📈 Análise Comparativa por Estado")
-    
+    # Análise comparativa por estado (se tiver coluna de estado)
     if 'Estado' in colunas and 'Massa_Total' in colunas:
+        st.header("📈 Análise Comparativa por Estado")
+        
         # Agrupar por estado
         dados_estado = df.groupby(colunas['Estado']).agg(
             Municipios=(colunas['Massa_Total'], 'count'),
@@ -510,7 +518,7 @@ def main():
         - **Estado:** Coluna D (Col_3)
         - **Região:** Coluna E (Col_4)
         - **Tipo de Coleta:** Coluna R (Col_17)
-        - **Massa Total:** Coluna Y (Col_24)
+        - **Massa Total:** Coluna Y (Col_24) - "Massa de resíduos sólidos total coletada para a rota cadastrada"
         - **Destino:** Coluna AC (Col_28)
         
         ## 🧮 Métodos de Cálculo
