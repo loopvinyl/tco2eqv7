@@ -5,6 +5,7 @@ import requests
 from io import BytesIO
 import matplotlib.pyplot as plt
 import unicodedata
+from collections import Counter
 
 # Configuração da página
 st.set_page_config(
@@ -31,18 +32,19 @@ MAPEAMENTO_DESTINOS = {
     'outros_codigos': {}  # Pode ser expandido conforme necessário
 }
 
-# Classificação dos destinos
+# Classificação dos destinos - ATUALIZADA COM NOVOS TIPOS
 CLASSIFICACAO_DESTINOS = {
     'Destinação Adequada': [
         'aterro sanitário', 'compostagem', 'reciclagem', 'triagem',
-        'unidade de triagem', 'aterro sanitario', 'usina de triagem'
+        'unidade de triagem', 'aterro sanitario', 'usina de triagem',
+        'unidade de manejo de resíduos de áreas verdes', 'galhadas e podas',
+        'áreas verdes', 'manejo de resíduos de áreas verdes'
     ],
     'Destinação a Melhorar': [
         'aterro controlado', 'lixão', 'lixao', 'aterro'
     ],
     'Outros Destinos': [
-        'unidade de manejo de resíduos de áreas verdes',
-        'galhadas e podas', 'áreas verdes'
+        # Outros tipos que não se enquadram nas categorias acima
     ]
 }
 
@@ -209,10 +211,13 @@ def traduzir_destino(destino):
     return destino_str
 
 def classificar_destino(destino_descricao):
-    """Classifica o destino em categorias"""
+    """Classifica o destino em categorias - ATUALIZADA"""
+    if pd.isna(destino_descricao):
+        return "Não informado"
+    
     desc_lower = str(destino_descricao).lower()
     
-    # Verificar Destinação Adequada
+    # Verificar Destinação Adequada (NOVA: inclui manejo de áreas verdes)
     for termo in CLASSIFICACAO_DESTINOS['Destinação Adequada']:
         if termo in desc_lower:
             return "Destinação Adequada"
@@ -222,16 +227,13 @@ def classificar_destino(destino_descricao):
         if termo in desc_lower:
             return "Destinação a Melhorar"
     
-    # Verificar Outros Destinos específicos
-    for termo in CLASSIFICACAO_DESTINOS['Outros Destinos']:
-        if termo in desc_lower:
-            return "Outros Destinos"
-    
-    # Classificação padrão
-    if any(term in desc_lower for term in ['triagem', 'compostagem', 'reciclagem']):
+    # Classificação baseada em padrões específicos
+    if any(term in desc_lower for term in ['triagem', 'compostagem', 'reciclagem', 'usina', 'galpão']):
         return "Destinação Adequada"
-    elif any(term in desc_lower for term in ['aterro', 'lixão', 'lixao']):
+    elif any(term in desc_lower for term in ['aterro controlado', 'lixão', 'lixao', 'aterro']):
         return "Destinação a Melhorar"
+    elif any(term in desc_lower for term in ['manejo', 'áreas verdes', 'galhadas', 'podas']):
+        return "Destinação Adequada"  # NOVO: Manejo de áreas verdes é adequado
     else:
         return "Outros Destinos"
 
@@ -474,27 +476,38 @@ def main():
                             for tipo in tipos_coleta:
                                 st.markdown(f"- {tipo}")
                     
-                    # Destinos Finais (mostrar todos com tradução e classificação)
+                    # Destinos Finais (AGORA COM CONTAGEM CORRETA)
                     if 'Destino' in colunas:
-                        destinos = dados_municipio_completo[colunas['Destino']].dropna().unique()
-                        if len(destinos) > 0:
+                        # Obter todos os destinos (incluindo duplicatas para contagem)
+                        destinos_series = dados_municipio_completo[colunas['Destino']].dropna()
+                        
+                        if len(destinos_series) > 0:
                             st.markdown("**Destinos Finais:**")
+                            
+                            # Contar ocorrências de cada destino
+                            contador_destinos = Counter(destinos_series.astype(str))
                             
                             # Contadores para estatísticas
                             contagem_tipos = {
                                 "Destinação Adequada": 0,
                                 "Destinação a Melhorar": 0,
-                                "Outros Destinos": 0,
-                                "Não Classificado": 0
+                                "Outros Destinos": 0
                             }
                             
-                            for destino in destinos:
-                                # Traduzir o destino
+                            # Agrupar destinos similares
+                            destinos_agrupados = {}
+                            for destino, count in contador_destinos.items():
                                 destino_traduzido = traduzir_destino(destino)
-                                
+                                if destino_traduzido in destinos_agrupados:
+                                    destinos_agrupados[destino_traduzido] += count
+                                else:
+                                    destinos_agrupados[destino_traduzido] = count
+                            
+                            # Exibir cada destino com contagem
+                            for destino_traduzido, count in destinos_agrupados.items():
                                 # Classificar o destino
                                 classificacao = classificar_destino(destino_traduzido)
-                                contagem_tipos[classificacao] = contagem_tipos.get(classificacao, 0) + 1
+                                contagem_tipos[classificacao] = contagem_tipos.get(classificacao, 0) + count
                                 
                                 # Determinar ícone e cor baseado na classificação
                                 if classificacao == "Destinação Adequada":
@@ -507,8 +520,11 @@ def main():
                                     icone = "ℹ️"
                                     cor = "blue"
                                 
-                                # Exibir destino com formatação
-                                st.markdown(f"- {icone} **{destino_traduzido}**")
+                                # Exibir destino com formatação e contagem
+                                if count > 1:
+                                    st.markdown(f"- {icone} **{destino_traduzido}** (×{count})")
+                                else:
+                                    st.markdown(f"- {icone} **{destino_traduzido}**")
                                 st.markdown(f"  <span style='color:{cor}; font-size:0.9em'>{classificacao}</span>", 
                                           unsafe_allow_html=True)
                             
@@ -516,19 +532,36 @@ def main():
                             st.markdown("---")
                             st.subheader("📊 Estatísticas de Destinação")
                             
+                            # Calcular totais
+                            total_destinos = sum(contador_destinos.values())
+                            
                             col_stat1, col_stat2, col_stat3 = st.columns(3)
                             with col_stat1:
+                                if total_destinos > 0:
+                                    percentual = (contagem_tipos['Destinação Adequada'] / total_destinos * 100)
+                                else:
+                                    percentual = 0
                                 st.metric("Destinação Adequada", 
                                          f"{contagem_tipos['Destinação Adequada']}",
-                                         f"{(contagem_tipos['Destinação Adequada']/len(destinos)*100):.1f}%")
+                                         f"{percentual:.1f}%")
+                            
                             with col_stat2:
+                                if total_destinos > 0:
+                                    percentual = (contagem_tipos['Destinação a Melhorar'] / total_destinos * 100)
+                                else:
+                                    percentual = 0
                                 st.metric("Destinação a Melhorar", 
                                          f"{contagem_tipos['Destinação a Melhorar']}",
-                                         f"{(contagem_tipos['Destinação a Melhorar']/len(destinos)*100):.1f}%")
+                                         f"{percentual:.1f}%")
+                            
                             with col_stat3:
+                                if total_destinos > 0:
+                                    percentual = (contagem_tipos['Outros Destinos'] / total_destinos * 100)
+                                else:
+                                    percentual = 0
                                 st.metric("Outros Destinos", 
                                          f"{contagem_tipos['Outros Destinos']}",
-                                         f"{(contagem_tipos['Outros Destinos']/len(destinos)*100):.1f}%")
+                                         f"{percentual:.1f}%")
             
             with col_info2:
                 st.subheader("📊 Dados Quantitativos")
@@ -718,8 +751,11 @@ def main():
         - 3543402: Unidade de triagem (galpão ou usina)
         - Outros códigos são exibidos como "Código XXXX (não mapeado)"
         
-        **Classificação de destinos:**
-        - ✅ Destinação Adequada: Aterro sanitário, compostagem, reciclagem, triagem
+        **Classificação de destinos (ATUALIZADA):**
+        - ✅ Destinação Adequada: 
+          - Aterro sanitário, compostagem, reciclagem, triagem
+          - Unidade de triagem (galpão ou usina)
+          - Unidade de manejo de resíduos de áreas verdes (galhadas e podas)
         - ⚠️ Destinação a Melhorar: Aterro controlado, lixão
         - ℹ️ Outros Destinos: Demais tipos de destinação
         
@@ -761,7 +797,7 @@ def main():
     st.markdown("""
     <div style='text-align: center'>
         <p>Desenvolvido para análise de dados SINISA 2023 | Dados: Sistema Nacional de Informações sobre Saneamento</p>
-        <p>Última atualização: Janeiro 2026 | Versão 2.3</p>
+        <p>Última atualização: Janeiro 2026 | Versão 2.4</p>
     </div>
     """, unsafe_allow_html=True)
 
