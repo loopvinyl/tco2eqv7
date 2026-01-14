@@ -453,7 +453,7 @@ def main():
                     if 'Região' in colunas and colunas['Região'] in primeiro_registro:
                         st.markdown(f"**Região:** {primeiro_registro[colunas['Região']]}")
                     
-                    # Secretaria/Setor
+                    # Secretaria/Setor (mantido apenas aqui, não na tabela)
                     if 'Secretaria' in colunas and colunas['Secretaria'] in primeiro_registro:
                         secretaria = primeiro_registro[colunas['Secretaria']]
                         if pd.notna(secretaria):
@@ -586,10 +586,10 @@ def main():
                             if col in primeiro_registro:
                                 st.write(f"**{tipo} ({col})**: {primeiro_registro[col]}")
             
-            # TABELA DE RELAÇÃO ENTRE TIPO DE COLETA, DESTINO E AGENTE EXECUTOR - CORRIGIDA
-            st.subheader("📋 Relação: Tipo de Coleta → Destino Final → Agente Executor → Secretaria")
+            # TABELA DE RELAÇÃO ENTRE TIPO DE COLETA, DESTINO E AGENTE EXECUTOR - SEM SECRETARIA
+            st.subheader("📋 Relação: Tipo de Coleta → Destino Final → Agente Executor")
             
-            # Criar tabela simplificada
+            # Criar tabela simplificada SEM Secretaria
             tabela_relacao = []
             
             for i, linha in dados_municipio_completo.iterrows():
@@ -597,20 +597,17 @@ def main():
                 tipo_coleta = linha[colunas['Tipo_Coleta']] if 'Tipo_Coleta' in colunas and colunas['Tipo_Coleta'] in linha else "Não informado"
                 destino = linha[colunas['Destino_Texto']] if 'Destino_Texto' in colunas and colunas['Destino_Texto'] in linha else "Não informado"
                 agente = linha[colunas['Agente_Executor']] if 'Agente_Executor' in colunas and colunas['Agente_Executor'] in linha else "Não informado"
-                secretaria = linha[colunas['Secretaria']] if 'Secretaria' in colunas and colunas['Secretaria'] in linha else "Não informado"
                 massa = linha[colunas['Massa_Total']] if 'Massa_Total' in colunas and colunas['Massa_Total'] in linha else 0
                 
                 # Limpar textos
                 tipo_coleta = str(tipo_coleta).strip() if pd.notna(tipo_coleta) else "Não informado"
                 destino = str(destino).strip() if pd.notna(destino) else "Não informado"
                 agente = str(agente).strip() if pd.notna(agente) else "Não informado"
-                secretaria = str(secretaria).strip() if pd.notna(secretaria) else "Não informado"
                 
                 tabela_relacao.append({
                     'Tipo de Coleta': tipo_coleta,
                     'Destino Final': destino,
                     'Agente Executor': agente,
-                    'Secretaria/Setor': secretaria,
                     'Massa (t)': formatar_br(massa, 1) if pd.notna(massa) else "0,0"
                 })
             
@@ -821,7 +818,6 @@ def main():
         - Massa Total: Coluna Y (Col_24) - "Massa de resíduos sólidos total coletada para a rota cadastrada"
         - Destino (Texto): Coluna AD (Col_28) - "Tipo de unidade de destino" (ex: Aterro controlado)
         - Agente Executor: Coluna AE (Col_29) - "Tipo de executor do serviço de destino dos resíduos" (ex: Agente privado)
-        - Secretaria/Setor: Coluna G (Col_6) - "Secretaria ou setor responsável"
         
         **Cálculo per capita:**
         - Quando disponível: usa população real da coluna J
