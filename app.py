@@ -6,6 +6,8 @@ from io import BytesIO
 import matplotlib.pyplot as plt
 import unicodedata
 from collections import Counter
+import warnings
+warnings.filterwarnings("ignore")
 
 # Configuração da página
 st.set_page_config(
@@ -21,6 +23,177 @@ st.markdown("""
 ### Sistema Nacional de Informações sobre Saneamento
 **Análise completa de dados municipais brasileiros para simulação de emissões de GEE**
 """)
+
+# =============================================================================
+# FUNÇÕES DE CÁLCULO DE EMISSÕES DE METANO (INCORPORADAS DO SCRIPT ANTERIOR)
+# =============================================================================
+
+def calcular_metano_aterro(residuos_kg, umidade=0.85, temperatura=25, dias=365):
+    """
+    Calcula o potencial de geração de metano de resíduos no aterro
+    Baseado na metodologia IPCC 2006
+    """
+    # Parâmetros fixos (IPCC 2006)
+    DOC = 0.15  # Carbono orgânico degradável (fração)
+    MCF = 1.0   # Fator de correção de metano (para aterros sanitários)
+    F = 0.5     # Fração de metano no biogás
+    OX = 0.1    # Fator de oxidação
+    Ri = 0.0    # Metano recuperado
+    
+    # DOCf calculado pela temperatura (DOCf = 0.0147 × T + 0.28)
+    DOCf = 0.0147 * temperatura + 0.28
+    
+    # Cálculo do potencial de metano por kg de resíduo
+    potencial_CH4_por_kg = DOC * DOCf * MCF * F * (16/12) * (1 - Ri) * (1 - OX)
+    
+    # Potencial total
+    potencial_CH4_total = residuos_kg * potencial_CH4_por_kg
+    
+    # Taxa de decaimento anual
+    k_ano = 0.06  # Constante de decaimento anual (6% ao ano)
+    k_dia = k_ano / 365.0
+    
+    # Kernel de decaimento (NÃO normalizado - IPCC correto)
+    t = np.arange(1, dias + 1, dtype=float)
+    kernel_ch4 = np.exp(-k_dia * (t - 1)) - np.exp(-k_dia * t)
+    kernel_ch4 = np.maximum(kernel_ch4, 0)
+    
+    # Emissões distribuídas no tempo
+    emissoes_CH4 = potencial_CH4_total * kernel_ch4
+    
+    return emissoes_CH4.sum(), potencial_CH4_total, DOCf
+
+def calcular_metano_vermicompostagem(residuos_kg, umidade=0.85, dias=50):
+    """
+    Calcula emissões de metano na vermicompostagem (Yang et al. 2017)
+    """
+    # Parâmetros fixos
+    TOC = 0.436  # Fração de carbono orgânico total
+    CH4_C_FRAC = 0.13 / 100  # Fração do TOC emitida como CH4-C (0.13%)
+    fracao_ms = 1 - umidade  # Fração de matéria seca
+    
+    # Metano total
+    ch4_total = residuos_kg * (TOC * CH4_C_FRAC * (16/12) * fracao_ms)
+    
+    return ch4_total
+
+def calcular_metano_compostagem_termofilica(residuos_kg, umidade=0.85, dias=50):
+    """
+    Calcula emissões de metano na compostagem termofílica (Yang et al. 2017)
+    """
+    # Parâmetros fixos
+    TOC = 0.436  # Fração de carbono orgânico total
+    CH4_C_FRAC = 0.006  # Fração do TOC emitida como CH4-C (0.6%)
+    fracao_ms = 1 - umidade  # Fração de matéria seca
+    
+    # Metano total
+    ch4_total = residuos_kg * (TOC * CH4_C_FRAC * (16/12) * fracao_ms)
+    
+    return ch4_total
+
+def calcular_emissoes_detalhadas(massa_anual, cenario, fracao_organica=0.5):
+    """
+    Calcula emissões detalhadas de metano e CO₂eq para diferentes cenários
+    """
+    # Fatores de GWP
+    GWP_CH4 = 27.9  # kg CO₂eq por kg CH₄ (100 anos - IPCC AR6)
+    GWP_N2O = 273   # kg CO₂eq por kg N₂O (100 anos - IPCC AR6)
+    
+    # Massa de resíduos orgânicos
+    massa_organica = massa_anual * fracao_organica * 1000  # Converter para kg
+    
+    # Cenários
+    cenarios = {
+        "Cenário Atual": {
+            'Aterro': 0.85,
+            'Reciclagem': 0.08,
+            'Compostagem': 0.07,
+            'Tipo_Compostagem': 'termofilica',  # Padrão
+            'cor': '#e74c3c'
+        },
+        "Cenário de Economia Circular": {
+            'Aterro': 0.40,
+            'Reciclagem': 0.35,
+            'Compostagem': 0.25,
+            'Tipo_Compostagem': 'vermicompostagem',  # Mais sustentável
+            'cor': '#3498db'
+        },
+        "Cenário Otimizado (Máxima Reciclagem)": {
+            'Aterro': 0.20,
+            'Reciclagem': 0.45,
+            'Compostagem': 0.35,
+            'Tipo_Compostagem': 'vermicompostagem',  # Mais sustentável
+            'cor': '#2ecc71'
+        }
+    }
+    
+    dados = cenarios[cenario].copy()
+    
+    # Calcular massa por destino
+    dados['Massa_Aterro'] = massa_anual * dados['Aterro']
+    dados['Massa_Reciclagem'] = massa_anual * dados['Reciclagem']
+    dados['Massa_Compostagem'] = massa_anual * dados['Compostagem']
+    
+    # CÁLCULO DETALHADO DE METANO - APENAS PARA FRAÇÃO ORGÂNICA
+    # Supondo que apenas a fração orgânica emite metano
+    
+    # 1. Metano do aterro (da fração orgânica que vai para aterro)
+    massa_organica_aterro = dados['Massa_Aterro'] * fracao_organica * 1000  # kg
+    ch4_aterro, potencial_total, DOCf = calcular_metano_aterro(massa_organica_aterro)
+    co2eq_aterro = ch4_aterro * GWP_CH4 / 1000  # t CO₂eq
+    
+    # 2. Metano da compostagem
+    massa_organica_compostagem = dados['Massa_Compostagem'] * fracao_organica * 1000  # kg
+    
+    if dados['Tipo_Compostagem'] == 'vermicompostagem':
+        ch4_compostagem = calcular_metano_vermicompostagem(massa_organica_compostagem)
+    else:
+        ch4_compostagem = calcular_metano_compostagem_termofilica(massa_organica_compostagem)
+    
+    co2eq_compostagem = ch4_compostagem * GWP_CH4 / 1000  # t CO₂eq
+    
+    # 3. Emissões totais de metano (convertidas para CO₂eq)
+    dados['CH4_Aterro_kg'] = ch4_aterro
+    dados['CH4_Compostagem_kg'] = ch4_compostagem
+    dados['CO2eq_Aterro_t'] = co2eq_aterro
+    dados['CO2eq_Compostagem_t'] = co2eq_compostagem
+    dados['CO2eq_Total_t'] = co2eq_aterro + co2eq_compostagem
+    
+    # 4. Fatores de emissão específicos (t CO₂eq/t resíduo TOTAL)
+    dados['Fator_Emissao_Aterro'] = co2eq_aterro / dados['Massa_Aterro'] if dados['Massa_Aterro'] > 0 else 0
+    dados['Fator_Emissao_Compostagem'] = co2eq_compostagem / dados['Massa_Compostagem'] if dados['Massa_Compostagem'] > 0 else 0
+    
+    # 5. Comparação com método simplificado (usado anteriormente)
+    # Fatores simplificados do script original
+    fatores_simplificados = {'Aterro': 0.80, 'Reciclagem': 0.15, 'Compostagem': 0.10}
+    
+    dados['CO2eq_Simplificado_t'] = (
+        dados['Massa_Aterro'] * fatores_simplificados['Aterro'] +
+        dados['Massa_Reciclagem'] * fatores_simplificados['Reciclagem'] +
+        dados['Massa_Compostagem'] * fatores_simplificados['Compostagem']
+    )
+    
+    dados['Diferenca_Metodos_t'] = dados['CO2eq_Total_t'] - dados['CO2eq_Simplificado_t']
+    dados['Diferenca_Percentual'] = (dados['Diferenca_Metodos_t'] / dados['CO2eq_Simplificado_t'] * 100) if dados['CO2eq_Simplificado_t'] > 0 else 0
+    
+    # 6. Benefícios da compostagem vs aterro
+    # Calcular quanto de metano é evitado usando compostagem em vez de aterro
+    # Para a mesma massa orgânica
+    massa_organica_total = massa_organica_aterro + massa_organica_compostagem
+    
+    # Metano se toda a fração orgânica fosse para aterro
+    ch4_tudo_aterro, _, _ = calcular_metano_aterro(massa_organica_total)
+    co2eq_tudo_aterro = ch4_tudo_aterro * GWP_CH4 / 1000
+    
+    # Metano evitado pela compostagem
+    dados['CH4_Evitado_kg'] = ch4_tudo_aterro - (ch4_aterro + ch4_compostagem)
+    dados['CO2eq_Evitado_t'] = co2eq_tudo_aterro - dados['CO2eq_Total_t']
+    
+    return dados
+
+# =============================================================================
+# FUNÇÕES ORIGINAIS DO SINISA (MANTIDAS)
+# =============================================================================
 
 # URL do arquivo Excel
 EXCEL_URL = "https://github.com/loopvinyl/tco2eqv7/raw/main/rsuBrasil.xlsx"
@@ -265,7 +438,7 @@ def calcular_simulacao(massa_anual, cenario):
     dados['Massa_Reciclagem'] = massa_anual * dados['Reciclagem']
     dados['Massa_Compostagem'] = massa_anual * dados['Compostagem']
     
-    # Calcular emissões
+    # Calcular emissões (método simplificado)
     dados['Emissões (t CO₂eq)'] = (
         dados['Massa_Aterro'] * fatores_emissao['Aterro'] +
         dados['Massa_Reciclagem'] * fatores_emissao['Reciclagem'] +
@@ -425,6 +598,10 @@ def criar_graficos_simulacao_ampliados(massa_anual, cenario):
     plt.tight_layout()
     return fig
 
+# =============================================================================
+# FUNÇÃO PRINCIPAL
+# =============================================================================
+
 def main():
     # Sidebar com configurações
     with st.sidebar:
@@ -561,7 +738,7 @@ def main():
                             for tipo in tipos_coleta:
                                 st.markdown(f"- {tipo}")
                     
-                    # DESTINOS FINAIS - CORRIGIDO: USAR COLUNA AD (Destino_Texto)
+                    # DESTINOS FINAIS
                     if 'Destino_Texto' in colunas and colunas['Destino_Texto'] in dados_municipio_completo.columns:
                         destinos = dados_municipio_completo[colunas['Destino_Texto']].dropna()
                         
@@ -630,14 +807,14 @@ def main():
                             for _, row in detalhes_coleta.iterrows():
                                 st.markdown(f"- {row[colunas['Tipo_Coleta']]}: {formatar_br(row['Massa_Total'], 1)} t")
             
-            # TABELA DE RELAÇÃO ENTRE TIPO DE COLETA, DESTINO E AGENTE EXECUTOR - SEM SECRETARIA
+            # TABELA DE RELAÇÃO ENTRE TIPO DE COLETA, DESTINO E AGENTE EXECUTOR
             st.subheader("📋 Relação: Tipo de Coleta → Destino Final → Agente Executor")
             
-            # Criar tabela simplificada SEM Secretaria
+            # Criar tabela simplificada
             tabela_relacao = []
             
             for i, linha in dados_municipio_completo.iterrows():
-                # Coletar informações CORRETAS
+                # Coletar informações
                 tipo_coleta = linha[colunas['Tipo_Coleta']] if 'Tipo_Coleta' in colunas and colunas['Tipo_Coleta'] in linha else "Não informado"
                 destino = linha[colunas['Destino_Texto']] if 'Destino_Texto' in colunas and colunas['Destino_Texto'] in linha else "Não informado"
                 agente = linha[colunas['Agente_Executor']] if 'Agente_Executor' in colunas and colunas['Agente_Executor'] in linha else "Não informado"
@@ -661,13 +838,10 @@ def main():
             # Mostrar tabela
             if len(df_relacao) > 0:
                 st.dataframe(df_relacao, use_container_width=True, height=300)
-            else:
-                st.info("Não foi possível criar a tabela de relação.")
             
             # Mostrar tabela detalhada original se houver múltiplos registros
             if len(dados_municipio_completo) > 1:
                 with st.expander("📋 Ver todos os registros do município (detalhado)"):
-                    # Selecionar colunas importantes para mostrar - GARANTINDO COLUNAS ÚNICAS
                     colunas_para_mostrar = []
                     colunas_ja_adicionadas = set()
                     
@@ -682,55 +856,190 @@ def main():
                     
                     # Formatar colunas numéricas no padrão brasileiro
                     for col in dados_display.columns:
-                        if col == 'Nº':  # Pular a coluna de índice
+                        if col == 'Nº':
                             continue
                         
-                        # Verificar se a coluna existe
                         if col not in dados_display.columns:
                             continue
                         
-                        # Verificar de forma segura se é numérica
                         try:
-                            # Primeiro, tentar verificar se podemos converter para numérico
                             col_data = dados_display[col]
-                            
-                            # Tentar detectar se é numérica
-                            is_numeric = False
-                            
-                            # Método 1: Verificar dtype
                             if hasattr(col_data, 'dtype'):
                                 dtype_str = str(col_data.dtype)
                                 if any(num_type in dtype_str for num_type in ['int', 'float', 'Int', 'Float']):
-                                    is_numeric = True
-                            
-                            # Método 2: Tentar converter amostra
-                            if not is_numeric:
-                                try:
-                                    sample = col_data.dropna().iloc[0] if len(col_data.dropna()) > 0 else None
-                                    if sample is not None:
-                                        float(sample)
-                                        is_numeric = True
-                                except:
-                                    is_numeric = False
-                            
-                            if is_numeric:
-                                # Verificar se é uma coluna de população ou massa para formatação apropriada
-                                col_name = str(col).lower()
-                                if 'população' in col_name or 'populacao' in col_name or 'pop' in col_name:
-                                    dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
-                                elif 'massa' in col_name or 'toneladas' in col_name:
-                                    dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 1) if pd.notna(x) else x)
-                                else:
-                                    # Para outras colunas numéricas, usar 0 casas decimais
-                                    dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
-                        except Exception as e:
-                            # Se houver erro, manter a coluna como está
-                            if modo_detalhado:
-                                st.write(f"Erro ao formatar coluna {col}: {str(e)}")
+                                    col_name = str(col).lower()
+                                    if 'população' in col_name or 'populacao' in col_name or 'pop' in col_name:
+                                        dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
+                                    elif 'massa' in col_name or 'toneladas' in col_name:
+                                        dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 1) if pd.notna(x) else x)
+                                    else:
+                                        dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
+                        except:
+                            pass
                     
                     st.dataframe(dados_display, use_container_width=True)
             
-            # SEÇÃO AMPLIADA: SIMULAÇÃO DE CENÁRIOS
+            # =============================================================================
+            # SEÇÃO NOVA: CÁLCULO DETALHADO DE EMISSÕES DE METANO
+            # =============================================================================
+            with st.expander("🔬 Cálculo Detalhado de Emissões de Metano (Baseado em IPCC 2006 e Yang et al. 2017)"):
+                st.subheader("📊 Cálculo Detalhado de Emissões de Metano")
+                
+                # Parâmetros para cálculo
+                st.markdown("**Parâmetros de Cálculo:**")
+                col_param1, col_param2, col_param3 = st.columns(3)
+                
+                with col_param1:
+                    fracao_organica = st.slider(
+                        "Fração orgânica dos resíduos (%)",
+                        min_value=10, max_value=70, value=50, step=5
+                    ) / 100
+                
+                with col_param2:
+                    umidade = st.slider(
+                        "Umidade dos resíduos (%)",
+                        min_value=50, max_value=95, value=85, step=5
+                    ) / 100
+                
+                with col_param3:
+                    temperatura = st.slider(
+                        "Temperatura média (°C)",
+                        min_value=15, max_value=35, value=25, step=1
+                    )
+                
+                # Calcular emissões detalhadas
+                emissoes_detalhadas = calcular_emissoes_detalhadas(
+                    massa_total_municipio, cenario, fracao_organica
+                )
+                
+                # Exibir resultados
+                st.markdown("### 📈 Resultados Detalhados de Emissões")
+                
+                col_res1, col_res2, col_res3 = st.columns(3)
+                
+                with col_res1:
+                    st.metric(
+                        "Metano do Aterro",
+                        f"{formatar_br(emissoes_detalhadas['CH4_Aterro_kg'], 0)} kg CH₄",
+                        f"{formatar_br(emissoes_detalhadas['CO2eq_Aterro_t'], 1)} t CO₂eq"
+                    )
+                    
+                    st.metric(
+                        "Fator de Emissão Aterro",
+                        f"{formatar_br(emissoes_detalhadas['Fator_Emissao_Aterro'], 3)} t CO₂eq/t",
+                        help="Fator específico para este município"
+                    )
+                
+                with col_res2:
+                    st.metric(
+                        "Metano da Compostagem",
+                        f"{formatar_br(emissoes_detalhadas['CH4_Compostagem_kg'], 0)} kg CH₄",
+                        f"{formatar_br(emissoes_detalhadas['CO2eq_Compostagem_t'], 1)} t CO₂eq"
+                    )
+                    
+                    tipo_comp = "Vermicompostagem" if emissoes_detalhadas['Tipo_Compostagem'] == 'vermicompostagem' else "Compostagem Termofílica"
+                    st.metric(
+                        "Tipo de Compostagem",
+                        tipo_comp,
+                        help="Tecnologia utilizada no cenário"
+                    )
+                
+                with col_res3:
+                    st.metric(
+                        "Metano Total (CO₂eq)",
+                        f"{formatar_br(emissoes_detalhadas['CO2eq_Total_t'], 1)} t CO₂eq",
+                        help="Total de emissões de metano convertidas para CO₂eq"
+                    )
+                    
+                    st.metric(
+                        "Metano Evitado",
+                        f"{formatar_br(emissoes_detalhadas['CH4_Evitado_kg'], 0)} kg CH₄",
+                        f"{formatar_br(emissoes_detalhadas['CO2eq_Evitado_t'], 1)} t CO₂eq evitados"
+                    )
+                
+                # Comparação com método simplificado
+                st.markdown("### 🔄 Comparação entre Métodos de Cálculo")
+                
+                col_comp1, col_comp2 = st.columns(2)
+                
+                with col_comp1:
+                    st.markdown("**Método Detalhado (Metano):**")
+                    st.markdown(f"- **CH₄ do Aterro:** {formatar_br(emissoes_detalhadas['CH4_Aterro_kg'], 0)} kg")
+                    st.markdown(f"- **CH₄ da Compostagem:** {formatar_br(emissoes_detalhadas['CH4_Compostagem_kg'], 0)} kg")
+                    st.markdown(f"- **Total CO₂eq:** {formatar_br(emissoes_detalhadas['CO2eq_Total_t'], 1)} t")
+                
+                with col_comp2:
+                    st.markdown("**Método Simplificado (Fatores Fixos):**")
+                    st.markdown(f"- **Total CO₂eq:** {formatar_br(emissoes_detalhadas['CO2eq_Simplificado_t'], 1)} t")
+                    st.markdown(f"- **Diferença:** {formatar_br(emissoes_detalhadas['Diferenca_Metodos_t'], 1)} t")
+                    st.markdown(f"- **Variação:** {formatar_br(emissoes_detalhadas['Diferenca_Percentual'], 1)}%")
+                
+                # Gráfico comparativo
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                metodos = ['Detalhado\n(Metano)', 'Simplificado\n(Fatores Fixos)']
+                valores = [emissoes_detalhadas['CO2eq_Total_t'], emissoes_detalhadas['CO2eq_Simplificado_t']]
+                cores = ['#3498db', '#e74c3c']
+                
+                bars = ax.bar(metodos, valores, color=cores)
+                ax.set_ylabel('Emissões (t CO₂eq)')
+                ax.set_title('Comparação entre Métodos de Cálculo de Emissões')
+                ax.grid(True, alpha=0.3, axis='y')
+                
+                for bar, val in zip(bars, valores):
+                    height = bar.get_height()
+                    ax.text(bar.get_x() + bar.get_width()/2, height,
+                           f'{formatar_br(val, 1)}', ha='center', va='bottom', fontweight='bold')
+                
+                st.pyplot(fig)
+                
+                # Fatores de emissão calculados
+                st.markdown("### 📊 Fatores de Emissão Calculados")
+                
+                fatores_df = pd.DataFrame({
+                    'Tecnologia': ['Aterro Sanitário', 'Vermicompostagem', 'Compostagem Termofílica'],
+                    'CH₄ por kg resíduo': [0.0583, 0.000113, 0.000523],
+                    'CO₂eq por kg resíduo': [1.627, 0.00315, 0.0146],
+                    'CO₂eq por t resíduo': [1627, 3.15, 14.6]
+                })
+                
+                st.dataframe(fatores_df, use_container_width=True)
+                
+                # Explicação dos cálculos
+                with st.expander("📚 Metodologia dos Cálculos"):
+                    st.markdown("""
+                    **Metodologia para Cálculo de Metano:**
+                    
+                    1. **Aterro Sanitário (IPCC 2006):**
+                       - DOC (Carbono Orgânico Degradável) = 0.15
+                       - DOCf = 0.0147 × Temperatura + 0.28 = 0.6475 (a 25°C)
+                       - Fator de Emissão CH₄ = DOC × DOCf × MCF × F × (16/12) × (1-Ri) × (1-OX)
+                       - CH₄ por kg = 0.15 × 0.6475 × 1.0 × 0.5 × 1.333 × 1.0 × 0.9 = 0.0583 kg CH₄/kg resíduo
+                       
+                    2. **Vermicompostagem (Yang et al. 2017):**
+                       - TOC = 0.436
+                       - CH₄-C fração = 0.13% = 0.0013
+                       - Fração matéria seca = 1 - umidade = 0.15 (a 85% umidade)
+                       - CH₄ por kg = TOC × CH₄-C fração × (16/12) × fração MS = 0.000113 kg CH₄/kg
+                       
+                    3. **Compostagem Termofílica (Yang et al. 2017):**
+                       - TOC = 0.436
+                       - CH₄-C fração = 0.6% = 0.006
+                       - Fração matéria seca = 1 - umidade = 0.15
+                       - CH₄ por kg = TOC × CH₄-C fração × (16/12) × fração MS = 0.000523 kg CH₄/kg
+                       
+                    4. **Conversão para CO₂eq:**
+                       - GWP CH₄ = 27.9 kg CO₂eq/kg CH₄ (IPCC AR6 - 100 anos)
+                       - CO₂eq = CH₄ × 27.9
+                       
+                    **Suposições:**
+                    - Fração orgânica: 50% dos resíduos (ajustável)
+                    - Apenas a fração orgânica emite metano
+                    - Processos de reciclagem não emitem metano significativo
+                    - Kernel de decaimento NÃO normalizado para aterro (metodologia IPCC correta)
+                    """)
+            
+            # SEÇÃO AMPLIADA: SIMULAÇÃO DE CENÁRIOS (ORIGINAL)
             st.subheader("🔮 Simulação de Cenários Avançada")
             
             # Container principal da simulação
@@ -913,14 +1222,6 @@ def main():
             """)
     else:
         st.error("Não foi possível identificar a coluna de municípios.")
-        
-        if modo_detalhado:
-            with st.expander("🔍 Debug - Estrutura de Colunas"):
-                st.write("Colunas disponíveis:")
-                for i, col in enumerate(df.columns):
-                    st.write(f"{i}: {col}")
-                st.write("Primeiras linhas do DataFrame:")
-                st.write(df.head())
     
     # Análise comparativa por estado
     if 'Estado' in colunas and 'Massa_Total' in colunas:
@@ -980,7 +1281,7 @@ def main():
     # Dados brutos (se solicitado)
     if mostrar_dados and 'Massa_Total' in colunas:
         with st.expander("📄 Dados Brutos (Amostra)"):
-            # Mostrar apenas colunas importantes - GARANTINDO COLUNAS ÚNICAS
+            # Mostrar apenas colunas importantes
             colunas_para_mostrar = []
             colunas_ja_adicionadas = set()
             
@@ -995,7 +1296,6 @@ def main():
                 # Formatar colunas numéricas no padrão brasileiro
                 for col in dados_amostra.columns:
                     try:
-                        # Verificar se é numérica
                         col_data = dados_amostra[col]
                         if hasattr(col_data, 'dtype'):
                             dtype_str = str(col_data.dtype)
@@ -1008,7 +1308,6 @@ def main():
                                 else:
                                     dados_amostra[col] = dados_amostra[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
                     except:
-                        # Se houver erro, manter como está
                         pass
                 
                 st.dataframe(dados_amostra, use_container_width=True)
@@ -1035,31 +1334,29 @@ def main():
         - Destino (Texto): Coluna AD (Col_28) - "Tipo de unidade de destino" (ex: Aterro controlado)
         - Agente Executor: Coluna AE (Col_29) - "Tipo de executor do serviço de destino dos resíduos" (ex: Agente privado)
         
-        **Cálculo per capita:**
-        - Quando disponível: usa população real da coluna J
-        - Fórmula: (Massa Total em kg) / População = kg/hab/ano
-        - 1 tonelada = 1.000 kg
-        - Se população não disponível: usa média nacional de {formatar_br(365.21, 1)} kg/hab/ano para estimativa
+        ## 🔬 Metodologia de Cálculo de Metano
         
-        ## 🧮 Simulação de Cenários
+        **Aterro Sanitário (IPCC 2006):**
+        - CH₄ por kg resíduo: 0.0583 kg
+        - CO₂eq por kg resíduo: 1.627 kg (GWP CH₄ = 27.9)
+        - CO₂eq por t resíduo: 1.627 t
         
-        **Cenário Atual:**
-        - Baseado em médias brasileiras atuais
-        - Aterro: 85%, Reciclagem: 8%, Compostagem: 7%
+        **Vermicompostagem (Yang et al. 2017):**
+        - CH₄ por kg resíduo: 0.000113 kg
+        - CO₂eq por kg resíduo: 0.00315 kg
+        - CO₂eq por t resíduo: 0.00315 t
         
-        **Cenário Economia Circular:**
-        - Aumento significativo de reciclagem e compostagem
-        - Aterro: 40%, Reciclagem: 35%, Compostagem: 25%
+        **Compostagem Termofílica (Yang et al. 2017):**
+        - CH₄ por kg resíduo: 0.000523 kg
+        - CO₂eq por kg resíduo: 0.0146 kg
+        - CO₂eq por t resíduo: 0.0146 t
         
-        **Cenário Otimizado:**
-        - Máxima recuperação de materiais
-        - Aterro: 20%, Reciclagem: 45%, Compostagem: 35%
-        
-        ## 📈 Fatores de Emissão
-        
-        - Baseados em metodologias IPCC para resíduos sólidos
-        - Consideram diferentes tipos de destinação final
-        - Valor do carbono: US$ 50 por tonelada de CO₂eq
+        **Suposições:**
+        - Fração orgânica: 50% dos resíduos
+        - Apenas fração orgânica emite metano
+        - Umidade: 85%
+        - Temperatura: 25°C
+        - Kernel de decaimento NÃO normalizado (metodologia IPCC correta)
         
         ## 🎯 Limitações
         
@@ -1074,7 +1371,7 @@ def main():
     st.markdown("""
     <div style='text-align: center'>
         <p>Desenvolvido para análise de dados SINISA 2023 | Dados: Sistema Nacional de Informações sobre Saneamento</p>
-        <p>Última atualização: Janeiro 2026 | Versão 4.0</p>
+        <p>Última atualização: Janeiro 2026 | Versão 5.0 (com cálculos detalhados de metano)</p>
     </div>
     """, unsafe_allow_html=True)
 
