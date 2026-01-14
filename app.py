@@ -636,17 +636,53 @@ def main():
                     dados_display = dados_municipio_completo[colunas_para_mostrar].copy()
                     dados_display.insert(0, 'Nº', range(1, len(dados_display) + 1))
                     
-                    # Formatar colunas numéricas no padrão brasileiro
+                    # Formatar colunas numéricas no padrão brasileiro - CORREÇÃO DO ERRO
                     for col in dados_display.columns:
-                        if dados_display[col].dtype in [np.int64, np.float64]:
-                            # Verificar se é uma coluna de população ou massa para formatação apropriada
-                            if 'População' in str(col) or 'pop' in str(col).lower():
-                                dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
-                            elif 'Massa' in str(col) or 'massa' in str(col).lower():
-                                dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 1) if pd.notna(x) else x)
-                            else:
-                                # Para outras colunas numéricas, usar 0 casas decimais
-                                dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
+                        if col == 'Nº':  # Pular a coluna de índice
+                            continue
+                        
+                        # Verificar se a coluna existe
+                        if col not in dados_display.columns:
+                            continue
+                        
+                        # Verificar de forma segura se é numérica
+                        try:
+                            # Primeiro, tentar verificar se podemos converter para numérico
+                            col_data = dados_display[col]
+                            
+                            # Tentar detectar se é numérica
+                            is_numeric = False
+                            
+                            # Método 1: Verificar dtype
+                            if hasattr(col_data, 'dtype'):
+                                dtype_str = str(col_data.dtype)
+                                if any(num_type in dtype_str for num_type in ['int', 'float', 'Int', 'Float']):
+                                    is_numeric = True
+                            
+                            # Método 2: Tentar converter amostra
+                            if not is_numeric:
+                                try:
+                                    sample = col_data.dropna().iloc[0] if len(col_data.dropna()) > 0 else None
+                                    if sample is not None:
+                                        float(sample)
+                                        is_numeric = True
+                                except:
+                                    is_numeric = False
+                            
+                            if is_numeric:
+                                # Verificar se é uma coluna de população ou massa para formatação apropriada
+                                col_name = str(col).lower()
+                                if 'população' in col_name or 'populacao' in col_name or 'pop' in col_name:
+                                    dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
+                                elif 'massa' in col_name or 'toneladas' in col_name:
+                                    dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 1) if pd.notna(x) else x)
+                                else:
+                                    # Para outras colunas numéricas, usar 0 casas decimais
+                                    dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
+                        except Exception as e:
+                            # Se houver erro, manter a coluna como está
+                            if modo_detalhado:
+                                st.write(f"Erro ao formatar coluna {col}: {str(e)}")
                     
                     st.dataframe(dados_display, use_container_width=True)
             
@@ -745,14 +781,22 @@ def main():
                 
                 # Formatar colunas numéricas no padrão brasileiro
                 for col in dados_amostra.columns:
-                    if dados_amostra[col].dtype in [np.int64, np.float64]:
-                        if 'População' in str(col) or 'pop' in str(col).lower():
-                            dados_amostra[col] = dados_amostra[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
-                        elif 'Massa' in str(col) or 'massa' in str(col).lower():
-                            dados_amostra[col] = dados_amostra[col].apply(lambda x: formatar_br(x, 1) if pd.notna(x) else x)
-                        else:
-                            # Para outras colunas numéricas, usar 0 casas decimais
-                            dados_amostra[col] = dados_amostra[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
+                    try:
+                        # Verificar se é numérica
+                        col_data = dados_amostra[col]
+                        if hasattr(col_data, 'dtype'):
+                            dtype_str = str(col_data.dtype)
+                            if any(num_type in dtype_str for num_type in ['int', 'float', 'Int', 'Float']):
+                                col_name = str(col).lower()
+                                if 'população' in col_name or 'populacao' in col_name or 'pop' in col_name:
+                                    dados_amostra[col] = dados_amostra[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
+                                elif 'massa' in col_name or 'toneladas' in col_name:
+                                    dados_amostra[col] = dados_amostra[col].apply(lambda x: formatar_br(x, 1) if pd.notna(x) else x)
+                                else:
+                                    dados_amostra[col] = dados_amostra[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
+                    except:
+                        # Se houver erro, manter como está
+                        pass
                 
                 st.dataframe(dados_amostra, use_container_width=True)
     
