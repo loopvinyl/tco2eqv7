@@ -1,40 +1,42 @@
 import streamlit as st
-import pandas as pd
 import numpy as np
-import requests
-from io import BytesIO
+import pandas as pd
 import matplotlib.pyplot as plt
-import unicodedata
-from collections import Counter
+from datetime import datetime, timedelta
+import seaborn as sns
+from matplotlib.ticker import FuncFormatter
+from io import BytesIO
+import requests
 import warnings
-warnings.filterwarnings("ignore")
+import unicodedata
 
-# Configuração da página
+# =============================================================================
+# CONFIGURAÇÕES INICIAIS
+# =============================================================================
 st.set_page_config(
-    page_title="Análise SINISA 2023 - Resíduos Sólidos Urbanos",
-    page_icon="🗑️",
+    page_title="SINISA + Cálculo de Metano - Análise Integrada", 
     layout="wide",
-    initial_sidebar_state="expanded"
+    page_icon="🌱"
 )
 
-# Título e introdução
-st.title("🗑️ Análise SINISA 2023 - Resíduos Sólidos Urbanos")
-st.markdown("""
-### Sistema Nacional de Informações sobre Saneamento
-**Análise completa de dados municipais brasileiros para simulação de emissões de GEE**
-""")
+warnings.filterwarnings("ignore")
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', None)
+np.seterr(divide='ignore', invalid='ignore')
+plt.rcParams['figure.dpi'] = 150
+plt.rcParams['font.size'] = 10
+sns.set_style("whitegrid")
 
 # =============================================================================
-# FUNÇÕES DE CÁLCULO DE EMISSÕES DE METANO (INCORPORADAS DO SCRIPT ANTERIOR)
+# FUNÇÕES PARA CÁLCULO DE METANO (MÉTODO CORRIGIDO)
 # =============================================================================
 
-def calcular_metano_aterro(residuos_kg, umidade=0.85, temperatura=25, dias=365):
+def calcular_metano_aterro(residuos_kg, umidade, temperatura, doc_val, dias=7300):
     """
     Calcula o potencial de geração de metano de resíduos no aterro
-    Baseado na metodologia IPCC 2006
+    Baseado na metodologia IPCC 2006 - Kernel NÃO normalizado (20 anos)
     """
     # Parâmetros fixos (IPCC 2006)
-    DOC = 0.15  # Carbono orgânico degradável (fração)
     MCF = 1.0   # Fator de correção de metano (para aterros sanitários)
     F = 0.5     # Fração de metano no biogás
     OX = 0.1    # Fator de oxidação
@@ -44,44 +46,34 @@ def calcular_metano_aterro(residuos_kg, umidade=0.85, temperatura=25, dias=365):
     DOCf = 0.0147 * temperatura + 0.28
     
     # Cálculo do potencial de metano por kg de resíduo
-    potencial_CH4_por_kg = DOC * DOCf * MCF * F * (16/12) * (1 - Ri) * (1 - OX)
+    potencial_CH4_por_kg = doc_val * DOCf * MCF * F * (16/12) * (1 - Ri) * (1 - OX)
     
     # Potencial total
     potencial_CH4_total = residuos_kg * potencial_CH4_por_kg
     
-    # Taxa de decaimento anual
-    k_ano = 0.06  # Constante de decaimento anual (6% ao ano)
+    # Taxa de decaimento anual (k = 0.06 por ano)
+    k_ano = 0.06
     k_dia = k_ano / 365.0
     
-    # Kernel de decaimento (NÃO normalizado - IPCC correto)
+    # Kernel de decaimento NÃO normalizado (IPCC correto)
     t = np.arange(1, dias + 1, dtype=float)
     kernel_ch4 = np.exp(-k_dia * (t - 1)) - np.exp(-k_dia * t)
     kernel_ch4 = np.maximum(kernel_ch4, 0)
     
-    # Emissões distribuídas no tempo
+    # Emissões distribuídas no tempo (NÃO normalizar!)
     emissoes_CH4 = potencial_CH4_total * kernel_ch4
     
-    return emissoes_CH4.sum(), potencial_CH4_total, DOCf
-
-def calcular_metano_vermicompostagem(residuos_kg, umidade=0.85, dias=50):
-    """
-    Calcula emissões de metano na vermicompostagem (Yang et al. 2017)
-    """
-    # Parâmetros fixos
-    TOC = 0.436  # Fração de carbono orgânico total
-    CH4_C_FRAC = 0.13 / 100  # Fração do TOC emitida como CH4-C (0.13%)
-    fracao_ms = 1 - umidade  # Fração de matéria seca
+    # Fração total emitida no período
+    fracao_total_emitida = kernel_ch4.sum()
     
-    # Metano total
-    ch4_total = residuos_kg * (TOC * CH4_C_FRAC * (16/12) * fracao_ms)
-    
-    return ch4_total
+    return emissoes_CH4.sum(), potencial_CH4_total, DOCf, fracao_total_emitida
 
-def calcular_metano_compostagem_termofilica(residuos_kg, umidade=0.85, dias=50):
+def calcular_metano_compostagem_termofilica(residuos_kg, umidade):
     """
-    Calcula emissões de metano na compostagem termofílica (Yang et al. 2017)
+    Calcula emissões de metano na compostagem termofílica
+    Baseado em Yang et al. (2017) - processo de 50 dias
     """
-    # Parâmetros fixos
+    # Parâmetros fixos para compostagem termofílica
     TOC = 0.436  # Fração de carbono orgânico total
     CH4_C_FRAC = 0.006  # Fração do TOC emitida como CH4-C (0.6%)
     fracao_ms = 1 - umidade  # Fração de matéria seca
@@ -91,148 +83,34 @@ def calcular_metano_compostagem_termofilica(residuos_kg, umidade=0.85, dias=50):
     
     return ch4_total
 
-def calcular_emissoes_detalhadas(massa_anual, cenario, fracao_organica=0.5):
+def calcular_metano_vermicompostagem(residuos_kg, umidade):
     """
-    Calcula emissões detalhadas de metano e CO₂eq para diferentes cenários
+    Calcula emissões de metano na vermicompostagem
+    Baseado em Yang et al. (2017) - processo de 50 dias
     """
-    # Fatores de GWP
-    GWP_CH4 = 27.9  # kg CO₂eq por kg CH₄ (100 anos - IPCC AR6)
-    GWP_N2O = 273   # kg CO₂eq por kg N₂O (100 anos - IPCC AR6)
+    # Parâmetros fixos para vermicompostagem
+    TOC = 0.436  # Fração de carbono orgânico total
+    CH4_C_FRAC = 0.13 / 100  # Fração do TOC emitida como CH4-C (0.13%)
+    fracao_ms = 1 - umidade  # Fração de matéria seca
     
-    # Massa de resíduos orgânicos
-    massa_organica = massa_anual * fracao_organica * 1000  # Converter para kg
+    # Metano total
+    ch4_total = residuos_kg * (TOC * CH4_C_FRAC * (16/12) * fracao_ms)
     
-    # Cenários
-    cenarios = {
-        "Cenário Atual": {
-            'Aterro': 0.85,
-            'Reciclagem': 0.08,
-            'Compostagem': 0.07,
-            'Tipo_Compostagem': 'termofilica',  # Padrão
-            'cor': '#e74c3c'
-        },
-        "Cenário de Economia Circular": {
-            'Aterro': 0.40,
-            'Reciclagem': 0.35,
-            'Compostagem': 0.25,
-            'Tipo_Compostagem': 'vermicompostagem',  # Mais sustentável
-            'cor': '#3498db'
-        },
-        "Cenário Otimizado (Máxima Reciclagem)": {
-            'Aterro': 0.20,
-            'Reciclagem': 0.45,
-            'Compostagem': 0.35,
-            'Tipo_Compostagem': 'vermicompostagem',  # Mais sustentável
-            'cor': '#2ecc71'
-        }
-    }
-    
-    dados = cenarios[cenario].copy()
-    
-    # Calcular massa por destino
-    dados['Massa_Aterro'] = massa_anual * dados['Aterro']
-    dados['Massa_Reciclagem'] = massa_anual * dados['Reciclagem']
-    dados['Massa_Compostagem'] = massa_anual * dados['Compostagem']
-    
-    # CÁLCULO DETALHADO DE METANO - APENAS PARA FRAÇÃO ORGÂNICA
-    # Supondo que apenas a fração orgânica emite metano
-    
-    # 1. Metano do aterro (da fração orgânica que vai para aterro)
-    massa_organica_aterro = dados['Massa_Aterro'] * fracao_organica * 1000  # kg
-    ch4_aterro, potencial_total, DOCf = calcular_metano_aterro(massa_organica_aterro)
-    co2eq_aterro = ch4_aterro * GWP_CH4 / 1000  # t CO₂eq
-    
-    # 2. Metano da compostagem
-    massa_organica_compostagem = dados['Massa_Compostagem'] * fracao_organica * 1000  # kg
-    
-    if dados['Tipo_Compostagem'] == 'vermicompostagem':
-        ch4_compostagem = calcular_metano_vermicompostagem(massa_organica_compostagem)
-    else:
-        ch4_compostagem = calcular_metano_compostagem_termofilica(massa_organica_compostagem)
-    
-    co2eq_compostagem = ch4_compostagem * GWP_CH4 / 1000  # t CO₂eq
-    
-    # 3. Emissões totais de metano (convertidas para CO₂eq)
-    dados['CH4_Aterro_kg'] = ch4_aterro
-    dados['CH4_Compostagem_kg'] = ch4_compostagem
-    dados['CO2eq_Aterro_t'] = co2eq_aterro
-    dados['CO2eq_Compostagem_t'] = co2eq_compostagem
-    dados['CO2eq_Total_t'] = co2eq_aterro + co2eq_compostagem
-    
-    # 4. Fatores de emissão específicos (t CO₂eq/t resíduo TOTAL)
-    dados['Fator_Emissao_Aterro'] = co2eq_aterro / dados['Massa_Aterro'] if dados['Massa_Aterro'] > 0 else 0
-    dados['Fator_Emissao_Compostagem'] = co2eq_compostagem / dados['Massa_Compostagem'] if dados['Massa_Compostagem'] > 0 else 0
-    
-    # 5. Comparação com método simplificado (usado anteriormente)
-    # Fatores simplificados do script original
-    fatores_simplificados = {'Aterro': 0.80, 'Reciclagem': 0.15, 'Compostagem': 0.10}
-    
-    dados['CO2eq_Simplificado_t'] = (
-        dados['Massa_Aterro'] * fatores_simplificados['Aterro'] +
-        dados['Massa_Reciclagem'] * fatores_simplificados['Reciclagem'] +
-        dados['Massa_Compostagem'] * fatores_simplificados['Compostagem']
-    )
-    
-    dados['Diferenca_Metodos_t'] = dados['CO2eq_Total_t'] - dados['CO2eq_Simplificado_t']
-    dados['Diferenca_Percentual'] = (dados['Diferenca_Metodos_t'] / dados['CO2eq_Simplificado_t'] * 100) if dados['CO2eq_Simplificado_t'] > 0 else 0
-    
-    # 6. Benefícios da compostagem vs aterro
-    # Calcular quanto de metano é evitado usando compostagem em vez de aterro
-    # Para a mesma massa orgânica
-    massa_organica_total = massa_organica_aterro + massa_organica_compostagem
-    
-    # Metano se toda a fração orgânica fosse para aterro
-    ch4_tudo_aterro, _, _ = calcular_metano_aterro(massa_organica_total)
-    co2eq_tudo_aterro = ch4_tudo_aterro * GWP_CH4 / 1000
-    
-    # Metano evitado pela compostagem
-    dados['CH4_Evitado_kg'] = ch4_tudo_aterro - (ch4_aterro + ch4_compostagem)
-    dados['CO2eq_Evitado_t'] = co2eq_tudo_aterro - dados['CO2eq_Total_t']
-    
-    return dados
+    return ch4_total
 
 # =============================================================================
-# FUNÇÕES ORIGINAIS DO SINISA (MANTIDAS)
+# FUNÇÕES PARA CARREGAMENTO E ANÁLISE DOS DADOS SINISA
 # =============================================================================
-
-# URL do arquivo Excel
-EXCEL_URL = "https://github.com/loopvinyl/tco2eqv7/raw/main/rsuBrasil.xlsx"
-
-# Função para formatar números no padrão brasileiro
-def formatar_br(numero, casas_decimais=1, sufixo=""):
-    """Formata um número no padrão brasileiro (vírgula decimal, ponto milhar)"""
-    if pd.isna(numero) or numero is None:
-        return "N/A"
-    
-    try:
-        # Converter para float se for string
-        if isinstance(numero, str):
-            # Remover pontos de milhar e substituir vírgula decimal por ponto
-            numero = float(numero.replace(".", "").replace(",", "."))
-        
-        # Formatar com separador de milhar e vírgula decimal
-        if casas_decimais == 0:
-            formato = "{:,.0f}"
-        else:
-            formato = "{:,." + str(casas_decimais) + "f}"
-        
-        # Formatar com ponto para milhar
-        formatado = formato.format(numero)
-        
-        # Substituir vírgula por ponto temporariamente, depois ponto por vírgula
-        formatado = formatado.replace(",", "X").replace(".", ",").replace("X", ".")
-        
-        return f"{formatado}{sufixo}"
-    except:
-        return str(numero)
 
 @st.cache_data(ttl=3600)
-def carregar_dados_completos():
+def carregar_dados_sinisa():
     """
-    Carrega e processa os dados do Excel SINISA 2023
-    Retorna: dataframe filtrado e dicionário de colunas mapeadas
+    Carrega os dados do SINISA a partir do GitHub
     """
     try:
+        # URL do arquivo Excel no GitHub
+        EXCEL_URL = "https://github.com/loopvinyl/tco2eqv7/raw/main/rsuBrasil.xlsx"
+        
         # Download do arquivo
         response = requests.get(EXCEL_URL, timeout=60)
         response.raise_for_status()
@@ -241,27 +119,21 @@ def carregar_dados_completos():
         # Carregar como Excel
         xls = pd.ExcelFile(excel_file)
         
-        # Carregar aba específica SEM cabeçalho para análise
+        # Carregar aba específica
         df_raw = pd.read_excel(xls, sheet_name="Manejo_Coleta_e_Destinação", header=None)
         
         # Encontrar linha de cabeçalho
         header_row = None
         for i in range(min(15, len(df_raw))):
-            # Verificar se esta linha tem os nomes das colunas conhecidos
             row_vals = df_raw.iloc[i].astype(str).str.lower().values
-            
-            # Procurar por padrões de nomes de coluna
             if any('col_' in v or 'massa' in v or 'destino' in v for v in row_vals):
                 header_row = i
                 break
         
         if header_row is None:
-            # Usar linha 0 como fallback
             df = pd.read_excel(xls, sheet_name="Manejo_Coleta_e_Destinação")
-            st.info("Usando primeira linha como cabeçalho")
         else:
             df = pd.read_excel(xls, sheet_name="Manejo_Coleta_e_Destinação", header=header_row)
-            st.success(f"Cabeçalho identificado na linha {header_row + 1}")
         
         # Aplicar filtro: apenas registros com 'Sim' na primeira coluna
         primeira_col = df.columns[0]
@@ -273,16 +145,16 @@ def carregar_dados_completos():
         return df_filtrado
         
     except Exception as e:
-        st.error(f"Erro ao carregar dados: {str(e)}")
+        st.error(f"Erro ao carregar dados SINISA: {str(e)}")
         return None
 
-def identificar_colunas_principais(df):
+def identificar_colunas_sinisa(df):
     """
-    Identifica automaticamente as colunas principais baseadas no relatório SINISA
+    Identifica automaticamente as colunas principais no dataset SINISA
     """
     colunas = {}
     
-    # Mapeamento baseado nas colunas reais do SINISA (corrigido)
+    # Mapeamento baseado nas colunas reais do SINISA
     mapeamento = {
         'Município': ['município', 'municipio', 'cidade', 'local', 'nom_mun', 'localidade'],
         'Estado': ['uf', 'estado', 'unidade da federação'],
@@ -308,14 +180,9 @@ def identificar_colunas_principais(df):
             if encontrada:
                 break
     
-    # Fallback para colunas por índice se não encontrou por nome
+    # Fallback para colunas por índice
     if 'Município' not in colunas and len(df.columns) > 2:
-        # Tentar identificar por conteúdo
-        for i, col in enumerate(df.columns):
-            if i == 2:  # Provável coluna de município
-                colunas['Município'] = col
-                break
-    
+        colunas['Município'] = df.columns[2]
     if 'Estado' not in colunas and len(df.columns) > 3:
         colunas['Estado'] = df.columns[3]
     if 'Região' not in colunas and len(df.columns) > 4:
@@ -330,8 +197,6 @@ def identificar_colunas_principais(df):
         colunas['Destino_Texto'] = df.columns[28]
     if 'Agente_Executor' not in colunas and len(df.columns) > 29:
         colunas['Agente_Executor'] = df.columns[29]
-    if 'Secretaria' not in colunas and len(df.columns) > 6:
-        colunas['Secretaria'] = df.columns[6]
     
     return colunas
 
@@ -343,22 +208,17 @@ def normalizar_texto(texto):
     texto = unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
     return texto.lower().strip()
 
-def buscar_todas_linhas_municipio(df, municipio_nome, coluna_municipio):
-    """Busca TODAS as linhas de um município"""
+def buscar_municipio(df, municipio_nome, coluna_municipio):
+    """Busca todas as linhas de um município"""
     if coluna_municipio not in df.columns:
         return None
     
-    # Normalizar nome do município buscado
     municipio_busca = normalizar_texto(municipio_nome)
-    
-    # Normalizar coluna para busca
     df_temp = df.copy()
     df_temp['_temp_norm'] = df_temp[coluna_municipio].apply(normalizar_texto)
     
-    # Buscar exato primeiro
     mask_exato = df_temp['_temp_norm'] == municipio_busca
     
-    # Se não encontrou exato, buscar por partes
     if not mask_exato.any():
         partes = [p for p in municipio_busca.split() if len(p) > 2]
         if len(partes) > 1:
@@ -371,1009 +231,639 @@ def buscar_todas_linhas_municipio(df, municipio_nome, coluna_municipio):
     else:
         mask = mask_exato
     
-    resultados = df_temp[mask].copy()
-    
-    return resultados
+    return df_temp[mask].copy()
 
-def calcular_simulacao(massa_anual, cenario):
-    """Calcula a simulação de cenários de destinação de resíduos"""
+def classificar_fração_organica(tipo_coleta):
+    """
+    Classifica a fração orgânica baseada no tipo de coleta
+    Baseado nas categorias do SINISA
+    """
+    if pd.isna(tipo_coleta):
+        return 0.10  # Valor padrão conservador
     
-    # Fatores de emissão por tipo de destinação (t CO₂eq/t resíduo)
-    fatores_emissao = {
-        'Aterro': 0.80,
-        'Reciclagem': 0.15,
-        'Compostagem': 0.10
-    }
+    tipo_coleta_str = str(tipo_coleta).lower()
     
-    # Valores econômicos (R$/tonelada)
-    valores_economicos = {
-        'Reciclagem': 250,  # R$/t de materiais recicláveis
-        'Compostagem': 150,  # R$/t de composto orgânico
-        'Carbono': 50,      # US$/t CO₂eq (convertido abaixo)
-    }
+    # Categorias com alta fração orgânica (vegetais, frutas, orgânicos)
+    categorias_alta_organica = [
+        'domiciliar', 'residencial', 'doméstica', 'domicilia',
+        'orgânico', 'organico', 'verde', 'vegetal', 'fruta',
+        'alimento', 'resto de comida', 'restos alimentares',
+        'podas', 'jardinagem', 'hortifruti'
+    ]
     
-    cenarios = {
-        "Cenário Atual": {
-            'Aterro': 0.85,
-            'Reciclagem': 0.08,
-            'Compostagem': 0.07,
-            'descricao': 'Baseado em médias brasileiras atuais',
-            'cor': '#e74c3c',
-            'melhorias': [
-                'Baixa taxa de reciclagem',
-                'Alto índice de aterramento',
-                'Pouco aproveitamento de orgânicos'
-            ]
-        },
-        "Cenário de Economia Circular": {
-            'Aterro': 0.40,
-            'Reciclagem': 0.35,
-            'Compostagem': 0.25,
-            'descricao': 'Aumento significativo de reciclagem e compostagem',
-            'cor': '#3498db',
-            'melhorias': [
-                'Reciclagem ampliada',
-                'Compostagem em escala',
-                'Redução de aterro em 45%'
-            ]
-        },
-        "Cenário Otimizado (Máxima Reciclagem)": {
-            'Aterro': 0.20,
-            'Reciclagem': 0.45,
-            'Compostagem': 0.35,
-            'descricao': 'Máxima recuperação de materiais',
-            'cor': '#2ecc71',
-            'melhorias': [
-                'Máxima recuperação de recicláveis',
-                'Alta taxa de compostagem',
-                'Redução de aterro em 65%'
-            ]
-        }
-    }
+    # Categorias com média fração orgânica
+    categorias_media_organica = [
+        'comercial', 'serviços', 'pública', 'varrição',
+        'limpeza urbana', 'feira', 'mercado'
+    ]
     
-    dados = cenarios[cenario].copy()
+    # Categorias com baixa fração orgânica
+    categorias_baixa_organica = [
+        'industrial', 'construção civil', 'entulho',
+        'saúde', 'hospitalar', 'saneamento',
+        'seletiva', 'recicláveis', 'plástico', 'papel',
+        'metal', 'vidro'
+    ]
     
-    # Calcular massa por destino
-    dados['Massa_Aterro'] = massa_anual * dados['Aterro']
-    dados['Massa_Reciclagem'] = massa_anual * dados['Reciclagem']
-    dados['Massa_Compostagem'] = massa_anual * dados['Compostagem']
+    # Verificar categorias
+    for termo in categorias_alta_organica:
+        if termo in tipo_coleta_str:
+            return 0.60  # 60% orgânico
     
-    # Calcular emissões (método simplificado)
-    dados['Emissões (t CO₂eq)'] = (
-        dados['Massa_Aterro'] * fatores_emissao['Aterro'] +
-        dados['Massa_Reciclagem'] * fatores_emissao['Reciclagem'] +
-        dados['Massa_Compostagem'] * fatores_emissao['Compostagem']
+    for termo in categorias_media_organica:
+        if termo in tipo_coleta_str:
+            return 0.40  # 40% orgânico
+    
+    for termo in categorias_baixa_organica:
+        if termo in tipo_coleta_str:
+            return 0.10  # 10% orgânico
+    
+    return 0.30  # Valor padrão para tipos não classificados
+
+# =============================================================================
+# FUNÇÕES AUXILIARES
+# =============================================================================
+
+def formatar_br(numero):
+    """Formata números no padrão brasileiro: 1.234,56"""
+    if pd.isna(numero) or numero is None:
+        return "N/A"
+    
+    numero = round(float(numero), 2)
+    return f"{numero:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+def br_format(x, pos):
+    """Função de formatação para eixos de gráficos (padrão brasileiro)"""
+    if x == 0:
+        return "0"
+    
+    if abs(x) < 0.01:
+        return f"{x:.1e}".replace(".", ",")
+    
+    if abs(x) >= 1000:
+        return f"{x:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    
+    return f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+# =============================================================================
+# APLICATIVO PRINCIPAL
+# =============================================================================
+
+# Título principal
+st.title("🌱 SINISA + Cálculo de Metano - Análise Integrada")
+st.markdown("""
+**Integração dos dados do SINISA 2023 com cálculos de metano para diferentes tecnologias**  
+**Método Corrigido:** Kernel NÃO normalizado para aterro (metodologia IPCC correta)  
+**Período:** Projeção para 20 anos (7.300 dias)  
+**Foco:** Análise da fração orgânica baseada no "Tipo de coleta executada"
+""")
+
+# Carregar dados SINISA
+st.header("📥 Carregamento de Dados SINISA 2023")
+
+with st.spinner("Carregando dados do SINISA 2023..."):
+    df_sinisa = carregar_dados_sinisa()
+
+if df_sinisa is None:
+    st.error("Não foi possível carregar os dados do SINISA. Verifique a conexão.")
+    st.stop()
+
+# Identificar colunas
+colunas = identificar_colunas_sinisa(df_sinisa)
+
+# Sidebar com configurações
+with st.sidebar:
+    st.header("⚙️ Configurações da Análise")
+    
+    # Seção de municípios
+    st.subheader("🏙️ Seleção de Município")
+    
+    # Sugestões de municípios comuns
+    municipios_sugeridos = [
+        "RIBEIRÃO PRETO",
+        "SÃO PAULO", 
+        "RIO DE JANEIRO",
+        "BELO HORIZONTE",
+        "SALVADOR",
+        "FORTALEZA",
+        "BRASÍLIA",
+        "CURITIBA",
+        "MANAUS",
+        "RECIFE"
+    ]
+    
+    municipio_selecionado = st.selectbox(
+        "Escolha um município:",
+        municipios_sugeridos,
+        key="select_municipio"
     )
     
-    # Calcular emissões do cenário atual para comparação
-    emissao_atual = massa_anual * 0.80  # Cenário atual padrão
-    dados['Redução Absoluta'] = emissao_atual - dados['Emissões (t CO₂eq)']
-    dados['Redução Percentual'] = (dados['Redução Absoluta'] / emissao_atual) * 100 if emissao_atual > 0 else 0
+    # Campo para buscar outros municípios
+    outro_municipio = st.text_input("Ou digite outro município:")
+    if outro_municipio:
+        municipio_selecionado = outro_municipio.upper()
     
-    # Calcular benefícios econômicos
-    dados['Valor_Reciclagem_R$'] = dados['Massa_Reciclagem'] * valores_economicos['Reciclagem']
-    dados['Valor_Compostagem_R$'] = dados['Massa_Compostagem'] * valores_economicos['Compostagem']
-    dados['Valor_Carbono_US$'] = dados['Redução Absoluta'] * valores_economicos['Carbono']
-    dados['Valor_Carbono_R$'] = dados['Valor_Carbono_US$'] * 5  # Conversão USD para BRL
+    st.markdown("---")
     
-    # Valor total econômico
-    dados['Valor_Total_R$'] = dados['Valor_Reciclagem_R$'] + dados['Valor_Compostagem_R$'] + dados['Valor_Carbono_R$']
+    # Parâmetros de cálculo
+    st.subheader("🔬 Parâmetros de Cálculo")
     
-    return dados
-
-def criar_graficos_simulacao_ampliados(massa_anual, cenario):
-    """Cria gráficos ampliados para visualização da simulação"""
+    anos_simulacao = st.slider(
+        "Anos de simulação", 
+        1, 50, 20, 1,
+        help="Período total da simulação em anos"
+    )
     
-    fracoes = calcular_simulacao(massa_anual, cenario)
+    dias_simulacao = anos_simulacao * 365
     
-    # Criar figura com subplots - 3x2 para mais gráficos
-    fig, axes = plt.subplots(3, 2, figsize=(16, 18))
+    umidade = st.slider(
+        "Umidade dos resíduos (%)", 
+        50, 95, 85, 1
+    ) / 100.0
     
-    # Configurar formatação brasileira nos gráficos
-    def formatar_br_grafico(x, p):
-        """Função para formatar números nos gráficos no padrão brasileiro"""
-        x = float(x)
-        if abs(x) >= 1_000_000:
-            return formatar_br(x / 1_000_000, 1) + ' mi'
-        elif abs(x) >= 1_000:
-            return formatar_br(x / 1_000, 1) + ' mil'
-        else:
-            return formatar_br(x, 0)
+    temperatura = st.slider(
+        "Temperatura média (°C)", 
+        15, 35, 25, 1
+    )
     
-    # Gráfico 1 (0,0): Destinação atual vs proposta
-    destinos = ['Aterro', 'Reciclagem', 'Compostagem']
-    valores_atual = [0.85, 0.08, 0.07]
-    valores_cenario = [fracoes['Aterro'], fracoes['Reciclagem'], fracoes['Compostagem']]
+    doc_val = st.slider(
+        "DOC - Carbono Orgânico Degradável (fração)", 
+        0.10, 0.50, 0.15, 0.01,
+        help="Fração de carbono orgânico degradável nos resíduos"
+    )
     
-    x = np.arange(len(destinos))
-    width = 0.35
+    st.markdown("---")
     
-    ax1 = axes[0, 0]
-    ax1.bar(x - width/2, valores_atual, width, label='Cenário Atual', color='#95a5a6')
-    ax1.bar(x + width/2, valores_cenario, width, label=cenario, color=fracoes['cor'])
-    ax1.set_ylabel('Proporção')
-    ax1.set_title('Comparativo de Destinação de Resíduos')
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(destinos)
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.0%}'))
+    # Opções de análise
+    st.subheader("📊 Opções de Análise")
     
-    # Gráfico 2 (0,1): Emissões por cenário
-    ax2 = axes[0, 1]
-    cenarios_nomes = ['Atual', 'Econ. Circular', 'Otimizado']
-    emissões = [massa_anual * 0.8, massa_anual * 0.4, massa_anual * 0.2]
-    cores = ['#e74c3c', '#3498db', '#2ecc71']
+    mostrar_detalhes = st.checkbox("Mostrar detalhes por rota", value=False)
+    usar_gwp = st.checkbox("Converter para CO₂eq (GWP 20 anos)", value=True)
     
-    bars = ax2.bar(cenarios_nomes, emissões, color=cores)
-    ax2.set_ylabel('Emissões de CO₂eq (t/ano)')
-    ax2.set_title('Emissões de GEE por Cenário')
-    ax2.grid(True, alpha=0.3)
-    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: formatar_br(y, 0)))
-    
-    for bar in bars:
-        height = bar.get_height()
-        ax2.text(bar.get_x() + bar.get_width()/2, height,
-                f'{formatar_br(height, 0)}', ha='center', va='bottom', fontweight='bold')
-    
-    # Gráfico 3 (1,0): Potencial de reciclagem
-    ax3 = axes[1, 0]
-    labels = ['Recicláveis Recuperáveis', 'Orgânicos Compostáveis', 'Rejeito']
-    sizes = [fracoes['Reciclagem'] * 100, fracoes['Compostagem'] * 100, fracoes['Aterro'] * 100]
-    colors = ['#3498db', '#2ecc71', '#e74c3c']
-    
-    ax3.pie(sizes, labels=labels, colors=colors, autopct=lambda p: f'{p:.1f}%', startangle=90)
-    ax3.set_title(f'Potencial de Valorização - {cenario}')
-    
-    # Gráfico 4 (1,1): Valor econômico
-    ax4 = axes[1, 1]
-    if fracoes['Redução Percentual'] > 0:
-        categorias = ['Redução de GEE', 'Valor Reciclagem', 'Valor Compostagem', 'Valor Total']
-        valores = [fracoes['Redução Absoluta'], fracoes['Valor_Reciclagem_R$'], 
-                  fracoes['Valor_Compostagem_R$'], fracoes['Valor_Total_R$']]
-        cores_barras = ['#2ecc71', '#3498db', '#9b59b6', '#f39c12']
-        
-        bars = ax4.bar(categorias, valores, color=cores_barras)
-        ax4.set_ylabel('Valor (R$)')
-        ax4.set_title('Valor Econômico Anual')
-        ax4.grid(True, alpha=0.3)
-        ax4.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: formatar_br(y, 0)))
-        
-        for i, (bar, val) in enumerate(zip(bars, valores)):
-            height = bar.get_height()
-            ax4.text(bar.get_x() + bar.get_width()/2, height,
-                    f'R$ {formatar_br(val, 0)}', ha='center', va='bottom', 
-                    fontweight='bold', fontsize=9)
-    else:
-        ax4.text(0.5, 0.5, 'Sem redução de emissões\nno cenário atual',
-                ha='center', va='center', transform=ax4.transAxes, fontsize=12)
-        ax4.set_title('Valor do Carbono')
-    
-    # Gráfico 5 (2,0): Comparação entre cenários (stacked)
-    ax5 = axes[2, 0]
-    cenarios_comparacao = ['Atual', 'Economia\nCircular', 'Otimizado']
-    dados_stack = {
-        'Aterro': [85, 40, 20],
-        'Reciclagem': [8, 35, 45],
-        'Compostagem': [7, 25, 35]
-    }
-    
-    bottom = np.zeros(3)
-    for destino, valores in dados_stack.items():
-        ax5.bar(cenarios_comparacao, valores, bottom=bottom, label=destino, 
-               color={'Aterro': '#e74c3c', 'Reciclagem': '#3498db', 'Compostagem': '#2ecc71'}[destino])
-        bottom += valores
-    
-    ax5.set_ylabel('Percentual (%)')
-    ax5.set_title('Comparação entre Cenários')
-    ax5.legend()
-    ax5.grid(True, alpha=0.3)
-    
-    # Gráfico 6 (2,1): Impacto ambiental
-    ax6 = axes[2, 1]
-    if fracoes['Redução Percentual'] > 0:
-        # Calcular impactos ambientais
-        arvores = int(fracoes['Redução Absoluta'] * 1000 / 22)  # 22 kg CO₂ por árvore/ano
-        carros = int(fracoes['Redução Absoluta'] / 2)  # 2 t CO₂ por carro/ano
-        energia = fracoes['Massa_Reciclagem'] * 0.95 * 14  # 14 MWh por tonelada
-        
-        categorias_impacto = ['Árvores Plantadas', 'Carros Retirados', 'Energia Economizada']
-        valores_impacto = [arvores, carros, energia]
-        unidades = ['árvores', 'carros', 'MWh']
-        
-        bars = ax6.bar(categorias_impacto, valores_impacto, color=['#27ae60', '#8e44ad', '#f1c40f'])
-        ax6.set_title('Impacto Ambiental Equivalente')
-        ax6.grid(True, alpha=0.3)
-        
-        for i, (bar, val, unid) in enumerate(zip(bars, valores_impacto, unidades)):
-            height = bar.get_height()
-            ax6.text(bar.get_x() + bar.get_width()/2, height,
-                    f'{formatar_br(val, 0)} {unid}', ha='center', va='bottom', 
-                    fontweight='bold', fontsize=9)
-    else:
-        ax6.text(0.5, 0.5, 'Sem redução de emissões\npara calcular impacto',
-                ha='center', va='center', transform=ax6.transAxes, fontsize=12)
-        ax6.set_title('Impacto Ambiental')
-    
-    plt.tight_layout()
-    return fig
-
-# =============================================================================
-# FUNÇÃO PRINCIPAL
-# =============================================================================
-
-def main():
-    # Sidebar com configurações
-    with st.sidebar:
-        st.markdown("### SINISA 2023")
-        
-        st.header("⚙️ Configurações")
-        
-        # Seção de municípios
-        st.subheader("🏙️ Seleção de Município")
-        municipios = [
-            "RIBEIRÃO PRETO",
-            "SÃO JOSÉ DO RIO PRETO", 
-            "SERTÃOZINHO",
-            "MANAUS",
-            "ARIQUEMES",
-            "BOCA DO ACRE"
-        ]
-        
-        municipio_selecionado = st.selectbox(
-            "Escolha o município para análise:",
-            municipios
+    if usar_gwp:
+        gwp_ch4 = st.number_input(
+            "GWP CH₄ (20 anos)", 
+            min_value=20.0, 
+            max_value=100.0, 
+            value=79.7, 
+            step=0.1,
+            help="Potencial de Aquecimento Global do metano para 20 anos"
         )
+    
+    st.markdown("---")
+    
+    # Botão de cálculo
+    if st.button("🚀 Calcular Emissões", type="primary"):
+        st.session_state.calcular_emissoes = True
+
+# Buscar dados do município selecionado
+if 'Município' in colunas:
+    dados_municipio = buscar_municipio(df_sinisa, municipio_selecionado, colunas['Município'])
+    
+    if dados_municipio is not None and len(dados_municipio) > 0:
+        st.success(f"✅ Município encontrado: {municipio_selecionado}")
+        st.info(f"**{len(dados_municipio)}** rotas de coleta encontradas")
         
-        # Campo para buscar outros municípios
-        outro_municipio = st.text_input("Ou digite outro município:")
-        if outro_municipio:
-            municipio_selecionado = outro_municipio.upper()
+        # Exibir informações básicas
+        col_info1, col_info2 = st.columns(2)
         
-        st.markdown("---")
+        with col_info1:
+            st.subheader("📋 Informações do Município")
+            
+            primeiro_registro = dados_municipio.iloc[0]
+            
+            if 'Estado' in colunas and colunas['Estado'] in primeiro_registro:
+                st.markdown(f"**Estado:** {primeiro_registro[colunas['Estado']]}")
+            
+            if 'Região' in colunas and colunas['Região'] in primeiro_registro:
+                st.markdown(f"**Região:** {primeiro_registro[colunas['Região']]}")
+            
+            # População
+            if 'População' in colunas and colunas['População'] in dados_municipio.columns:
+                populacao_valores = dados_municipio[colunas['População']].dropna().unique()
+                if len(populacao_valores) > 0:
+                    st.markdown(f"**População:** {formatar_br(float(populacao_valores[0]))} hab")
         
-        # Seção de cenários
-        st.subheader("📈 Cenários de Simulação")
-        cenario = st.radio(
-            "Escolha o cenário para simulação:",
-            ["Cenário Atual", 
-             "Cenário de Economia Circular", 
-             "Cenário Otimizado (Máxima Reciclagem)"]
-        )
-        
-        st.markdown("---")
-        
-        # Opções avançadas
-        st.subheader("🔧 Opções Avançadas")
-        modo_detalhado = st.checkbox("Modo detalhado", value=False)
-        mostrar_dados = st.checkbox("Mostrar dados brutos", value=False)
-        
-        st.markdown("---")
-        
-        # Informações sobre os dados
-        st.info("""
-        **Fonte:** SINISA 2023  
-        **Registros:** 12.822 válidos  
-        **Média nacional:** 365 kg/hab/ano  
-        **Período:** Dados de 2023
-        """)
-    
-    # Carregamento de dados
-    st.header("📥 Carregamento de Dados")
-    
-    with st.spinner("Carregando dados do SINISA 2023..."):
-        df = carregar_dados_completos()
-    
-    if df is None:
-        st.error("Falha ao carregar dados. Verifique a conexão e o arquivo.")
-        return
-    
-    # Identificação de colunas
-    colunas = identificar_colunas_principais(df)
-    
-    # Dashboard de métricas
-    st.header("📊 Dashboard SINISA 2023")
-    
-    # Métricas principais
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Registros Válidos", f"{formatar_br(len(df), 0)}", "Com 'Sim'")
-    
-    with col2:
-        if 'Massa_Total' in colunas:
-            massa_total = df[colunas['Massa_Total']].sum()
-            st.metric("Massa Total Coletada", f"{formatar_br(massa_total, 0)} t", "Nacional")
-    
-    with col3:
-        if 'Estado' in colunas:
-            estados = df[colunas['Estado']].nunique()
-            st.metric("Estados", f"{formatar_br(estados, 0)}", "Com dados")
-    
-    with col4:
-        if 'Região' in colunas:
-            regioes = df[colunas['Região']].nunique()
-            st.metric("Regiões", f"{formatar_br(regioes, 0)}", "Brasil")
-    
-    # Análise do município selecionado
-    st.header(f"🏙️ Análise Municipal: {municipio_selecionado}")
-    
-    if 'Município' in colunas:
-        # Buscar TODAS as linhas do município
-        dados_municipio_completo = buscar_todas_linhas_municipio(df, municipio_selecionado, colunas['Município'])
-        
-        if dados_municipio_completo is not None and len(dados_municipio_completo) > 0:
-            st.success(f"✅ Município encontrado! {formatar_br(len(dados_municipio_completo), 0)} registro(s) no total.")
+        with col_info2:
+            st.subheader("📊 Resumo das Rotas")
             
-            # Layout em colunas para informações
-            col_info1, col_info2 = st.columns(2)
-            
-            with col_info1:
-                st.subheader("📋 Informações Gerais")
-                
-                info_card = st.container()
-                with info_card:
-                    # Município (usar o primeiro registro)
-                    primeiro_registro = dados_municipio_completo.iloc[0]
-                    st.markdown(f"**Município:** {primeiro_registro[colunas['Município']]}")
-                    
-                    # Estado e Região
-                    if 'Estado' in colunas and colunas['Estado'] in primeiro_registro:
-                        st.markdown(f"**Estado:** {primeiro_registro[colunas['Estado']]}")
-                    
-                    if 'Região' in colunas and colunas['Região'] in primeiro_registro:
-                        st.markdown(f"**Região:** {primeiro_registro[colunas['Região']]}")
-                    
-                    # Secretaria/Setor (mantido apenas aqui, não na tabela)
-                    if 'Secretaria' in colunas and colunas['Secretaria'] in primeiro_registro:
-                        secretaria = primeiro_registro[colunas['Secretaria']]
-                        if pd.notna(secretaria):
-                            st.markdown(f"**Secretaria/Setor:** {secretaria}")
-                    
-                    # Tipos de Coleta (mostrar todos)
-                    if 'Tipo_Coleta' in colunas:
-                        tipos_coleta = dados_municipio_completo[colunas['Tipo_Coleta']].dropna().unique()
-                        if len(tipos_coleta) > 0:
-                            st.markdown("**Tipos de Coleta:**")
-                            for tipo in tipos_coleta:
-                                st.markdown(f"- {tipo}")
-                    
-                    # DESTINOS FINAIS
-                    if 'Destino_Texto' in colunas and colunas['Destino_Texto'] in dados_municipio_completo.columns:
-                        destinos = dados_municipio_completo[colunas['Destino_Texto']].dropna()
-                        
-                        if len(destinos) > 0:
-                            st.markdown("**Destinos Finais:**")
-                            
-                            # Contar ocorrências EXATAS
-                            contador_destinos = Counter(destinos.astype(str))
-                            
-                            # Mostrar cada destino com contagem
-                            for destino_texto, count in contador_destinos.items():
-                                if pd.isna(destino_texto) or destino_texto == "nan":
-                                    continue
-                                
-                                destino_limpo = str(destino_texto).strip()
-                                if count > 1:
-                                    st.markdown(f"- **{destino_limpo}** (aparece {formatar_br(count, 0)} vezes)")
-                                else:
-                                    st.markdown(f"- **{destino_limpo}**")
-                        else:
-                            st.markdown("*Destinos não informados*")
-                    else:
-                        st.markdown("*Coluna de destinos não identificada*")
-            
-            with col_info2:
-                st.subheader("📊 Dados Quantitativos")
-                
-                if 'Massa_Total' in colunas:
-                    # Soma a massa total de todas as linhas do município
-                    massa_total_municipio = dados_municipio_completo[colunas['Massa_Total']].sum()
-                    
-                    if pd.notna(massa_total_municipio) and massa_total_municipio > 0:
-                        # Obter população REAL da coluna J (primeiro valor não nulo)
-                        populacao_real = None
-                        if 'População' in colunas and colunas['População'] in dados_municipio_completo.columns:
-                            # Filtrar valores não nulos e pegar o primeiro
-                            valores_populacao = dados_municipio_completo[colunas['População']].dropna().unique()
-                            if len(valores_populacao) > 0:
-                                populacao_real = float(valores_populacao[0])
-                        
-                        # Exibição de métricas com formatação brasileira
-                        st.metric("Massa Coletada Anual Total", f"{formatar_br(massa_total_municipio, 1)} t")
-                        
-                        if populacao_real and populacao_real > 0:
-                            # Usar população REAL
-                            st.metric("População Municipal", f"{formatar_br(populacao_real, 0)} hab", "Dados SINISA 2023")
-                            
-                            # Calcular geração per capita REAL
-                            geracao_per_capita = (massa_total_municipio * 1000) / populacao_real
-                            st.metric("Geração Per Capita", f"{formatar_br(geracao_per_capita, 1)} kg/hab/ano", 
-                                     f"Média nacional: {formatar_br(365.21, 1)} kg/hab/ano")
-                        else:
-                            # Se não tiver população, mostrar estimativa
-                            populacao_estimada = (massa_total_municipio * 1000) / 365.21
-                            st.metric("População Estimada", f"{formatar_br(populacao_estimada, 0)} hab", "Baseado na média nacional")
-                            st.metric("Geração Per Capita", f"{formatar_br(365.21, 1)} kg/hab/ano", "Média nacional (estimativa)")
-                        
-                        # Detalhamento por tipo de coleta
-                        st.markdown("**Detalhamento por Tipo de Coleta:**")
-                        if 'Tipo_Coleta' in colunas:
-                            detalhes_coleta = dados_municipio_completo.groupby(colunas['Tipo_Coleta']).agg(
-                                Massa_Total=(colunas['Massa_Total'], 'sum'),
-                                Contagem=(colunas['Massa_Total'], 'count')
-                            ).reset_index()
-                            
-                            for _, row in detalhes_coleta.iterrows():
-                                st.markdown(f"- {row[colunas['Tipo_Coleta']]}: {formatar_br(row['Massa_Total'], 1)} t")
-            
-            # TABELA DE RELAÇÃO ENTRE TIPO DE COLETA, DESTINO E AGENTE EXECUTOR
-            st.subheader("📋 Relação: Tipo de Coleta → Destino Final → Agente Executor")
-            
-            # Criar tabela simplificada
-            tabela_relacao = []
-            
-            for i, linha in dados_municipio_completo.iterrows():
-                # Coletar informações
-                tipo_coleta = linha[colunas['Tipo_Coleta']] if 'Tipo_Coleta' in colunas and colunas['Tipo_Coleta'] in linha else "Não informado"
-                destino = linha[colunas['Destino_Texto']] if 'Destino_Texto' in colunas and colunas['Destino_Texto'] in linha else "Não informado"
-                agente = linha[colunas['Agente_Executor']] if 'Agente_Executor' in colunas and colunas['Agente_Executor'] in linha else "Não informado"
-                massa = linha[colunas['Massa_Total']] if 'Massa_Total' in colunas and colunas['Massa_Total'] in linha else 0
-                
-                # Limpar textos
-                tipo_coleta = str(tipo_coleta).strip() if pd.notna(tipo_coleta) else "Não informado"
-                destino = str(destino).strip() if pd.notna(destino) else "Não informado"
-                agente = str(agente).strip() if pd.notna(agente) else "Não informado"
-                
-                tabela_relacao.append({
-                    'Tipo de Coleta': tipo_coleta,
-                    'Destino Final': destino,
-                    'Agente Executor': agente,
-                    'Massa (t)': formatar_br(massa, 1) if pd.notna(massa) else "0,0"
-                })
-            
-            # Criar DataFrame
-            df_relacao = pd.DataFrame(tabela_relacao)
-            
-            # Mostrar tabela
-            if len(df_relacao) > 0:
-                st.dataframe(df_relacao, use_container_width=True, height=300)
-            
-            # Mostrar tabela detalhada original se houver múltiplos registros
-            if len(dados_municipio_completo) > 1:
-                with st.expander("📋 Ver todos os registros do município (detalhado)"):
-                    colunas_para_mostrar = []
-                    colunas_ja_adicionadas = set()
-                    
-                    for tipo, col in colunas.items():
-                        if col in dados_municipio_completo.columns and col not in colunas_ja_adicionadas:
-                            colunas_para_mostrar.append(col)
-                            colunas_ja_adicionadas.add(col)
-                    
-                    # Adicionar índice
-                    dados_display = dados_municipio_completo[colunas_para_mostrar].copy()
-                    dados_display.insert(0, 'Nº', range(1, len(dados_display) + 1))
-                    
-                    # Formatar colunas numéricas no padrão brasileiro
-                    for col in dados_display.columns:
-                        if col == 'Nº':
-                            continue
-                        
-                        if col not in dados_display.columns:
-                            continue
-                        
-                        try:
-                            col_data = dados_display[col]
-                            if hasattr(col_data, 'dtype'):
-                                dtype_str = str(col_data.dtype)
-                                if any(num_type in dtype_str for num_type in ['int', 'float', 'Int', 'Float']):
-                                    col_name = str(col).lower()
-                                    if 'população' in col_name or 'populacao' in col_name or 'pop' in col_name:
-                                        dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
-                                    elif 'massa' in col_name or 'toneladas' in col_name:
-                                        dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 1) if pd.notna(x) else x)
-                                    else:
-                                        dados_display[col] = dados_display[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
-                        except:
-                            pass
-                    
-                    st.dataframe(dados_display, use_container_width=True)
-            
-            # =============================================================================
-            # SEÇÃO NOVA: CÁLCULO DETALHADO DE EMISSÕES DE METANO
-            # =============================================================================
-            with st.expander("🔬 Cálculo Detalhado de Emissões de Metano (Baseado em IPCC 2006 e Yang et al. 2017)"):
-                st.subheader("📊 Cálculo Detalhado de Emissões de Metano")
-                
-                # Parâmetros para cálculo
-                st.markdown("**Parâmetros de Cálculo:**")
-                col_param1, col_param2, col_param3 = st.columns(3)
-                
-                with col_param1:
-                    fracao_organica = st.slider(
-                        "Fração orgânica dos resíduos (%)",
-                        min_value=10, max_value=70, value=50, step=5
-                    ) / 100
-                
-                with col_param2:
-                    umidade = st.slider(
-                        "Umidade dos resíduos (%)",
-                        min_value=50, max_value=95, value=85, step=5
-                    ) / 100
-                
-                with col_param3:
-                    temperatura = st.slider(
-                        "Temperatura média (°C)",
-                        min_value=15, max_value=35, value=25, step=1
-                    )
-                
-                # Calcular emissões detalhadas
-                emissoes_detalhadas = calcular_emissoes_detalhadas(
-                    massa_total_municipio, cenario, fracao_organica
+            # Massa total
+            if 'Massa_Total' in colunas:
+                massa_total = dados_municipio[colunas['Massa_Total']].sum()
+                st.metric(
+                    "Massa Total Coletada",
+                    f"{formatar_br(massa_total)} t/ano",
+                    help="Soma de todas as rotas do município"
                 )
-                
-                # Exibir resultados
-                st.markdown("### 📈 Resultados Detalhados de Emissões")
-                
-                col_res1, col_res2, col_res3 = st.columns(3)
-                
-                with col_res1:
-                    st.metric(
-                        "Metano do Aterro",
-                        f"{formatar_br(emissoes_detalhadas['CH4_Aterro_kg'], 0)} kg CH₄",
-                        f"{formatar_br(emissoes_detalhadas['CO2eq_Aterro_t'], 1)} t CO₂eq"
-                    )
-                    
-                    st.metric(
-                        "Fator de Emissão Aterro",
-                        f"{formatar_br(emissoes_detalhadas['Fator_Emissao_Aterro'], 3)} t CO₂eq/t",
-                        help="Fator específico para este município"
-                    )
-                
-                with col_res2:
-                    st.metric(
-                        "Metano da Compostagem",
-                        f"{formatar_br(emissoes_detalhadas['CH4_Compostagem_kg'], 0)} kg CH₄",
-                        f"{formatar_br(emissoes_detalhadas['CO2eq_Compostagem_t'], 1)} t CO₂eq"
-                    )
-                    
-                    tipo_comp = "Vermicompostagem" if emissoes_detalhadas['Tipo_Compostagem'] == 'vermicompostagem' else "Compostagem Termofílica"
-                    st.metric(
-                        "Tipo de Compostagem",
-                        tipo_comp,
-                        help="Tecnologia utilizada no cenário"
-                    )
-                
-                with col_res3:
-                    st.metric(
-                        "Metano Total (CO₂eq)",
-                        f"{formatar_br(emissoes_detalhadas['CO2eq_Total_t'], 1)} t CO₂eq",
-                        help="Total de emissões de metano convertidas para CO₂eq"
-                    )
-                    
-                    st.metric(
-                        "Metano Evitado",
-                        f"{formatar_br(emissoes_detalhadas['CH4_Evitado_kg'], 0)} kg CH₄",
-                        f"{formatar_br(emissoes_detalhadas['CO2eq_Evitado_t'], 1)} t CO₂eq evitados"
-                    )
-                
-                # Comparação com método simplificado
-                st.markdown("### 🔄 Comparação entre Métodos de Cálculo")
-                
-                col_comp1, col_comp2 = st.columns(2)
-                
-                with col_comp1:
-                    st.markdown("**Método Detalhado (Metano):**")
-                    st.markdown(f"- **CH₄ do Aterro:** {formatar_br(emissoes_detalhadas['CH4_Aterro_kg'], 0)} kg")
-                    st.markdown(f"- **CH₄ da Compostagem:** {formatar_br(emissoes_detalhadas['CH4_Compostagem_kg'], 0)} kg")
-                    st.markdown(f"- **Total CO₂eq:** {formatar_br(emissoes_detalhadas['CO2eq_Total_t'], 1)} t")
-                
-                with col_comp2:
-                    st.markdown("**Método Simplificado (Fatores Fixos):**")
-                    st.markdown(f"- **Total CO₂eq:** {formatar_br(emissoes_detalhadas['CO2eq_Simplificado_t'], 1)} t")
-                    st.markdown(f"- **Diferença:** {formatar_br(emissoes_detalhadas['Diferenca_Metodos_t'], 1)} t")
-                    st.markdown(f"- **Variação:** {formatar_br(emissoes_detalhadas['Diferenca_Percentual'], 1)}%")
-                
-                # Gráfico comparativo
-                fig, ax = plt.subplots(figsize=(10, 6))
-                
-                metodos = ['Detalhado\n(Metano)', 'Simplificado\n(Fatores Fixos)']
-                valores = [emissoes_detalhadas['CO2eq_Total_t'], emissoes_detalhadas['CO2eq_Simplificado_t']]
-                cores = ['#3498db', '#e74c3c']
-                
-                bars = ax.bar(metodos, valores, color=cores)
-                ax.set_ylabel('Emissões (t CO₂eq)')
-                ax.set_title('Comparação entre Métodos de Cálculo de Emissões')
-                ax.grid(True, alpha=0.3, axis='y')
-                
-                for bar, val in zip(bars, valores):
-                    height = bar.get_height()
-                    ax.text(bar.get_x() + bar.get_width()/2, height,
-                           f'{formatar_br(val, 1)}', ha='center', va='bottom', fontweight='bold')
-                
-                st.pyplot(fig)
-                
-                # Fatores de emissão calculados
-                st.markdown("### 📊 Fatores de Emissão Calculados")
-                
-                fatores_df = pd.DataFrame({
-                    'Tecnologia': ['Aterro Sanitário', 'Vermicompostagem', 'Compostagem Termofílica'],
-                    'CH₄ por kg resíduo': [0.0583, 0.000113, 0.000523],
-                    'CO₂eq por kg resíduo': [1.627, 0.00315, 0.0146],
-                    'CO₂eq por t resíduo': [1627, 3.15, 14.6]
-                })
-                
-                st.dataframe(fatores_df, use_container_width=True)
-                
-                # Explicação dos cálculos
-                with st.expander("📚 Metodologia dos Cálculos"):
-                    st.markdown("""
-                    **Metodologia para Cálculo de Metano:**
-                    
-                    1. **Aterro Sanitário (IPCC 2006):**
-                       - DOC (Carbono Orgânico Degradável) = 0.15
-                       - DOCf = 0.0147 × Temperatura + 0.28 = 0.6475 (a 25°C)
-                       - Fator de Emissão CH₄ = DOC × DOCf × MCF × F × (16/12) × (1-Ri) × (1-OX)
-                       - CH₄ por kg = 0.15 × 0.6475 × 1.0 × 0.5 × 1.333 × 1.0 × 0.9 = 0.0583 kg CH₄/kg resíduo
-                       
-                    2. **Vermicompostagem (Yang et al. 2017):**
-                       - TOC = 0.436
-                       - CH₄-C fração = 0.13% = 0.0013
-                       - Fração matéria seca = 1 - umidade = 0.15 (a 85% umidade)
-                       - CH₄ por kg = TOC × CH₄-C fração × (16/12) × fração MS = 0.000113 kg CH₄/kg
-                       
-                    3. **Compostagem Termofílica (Yang et al. 2017):**
-                       - TOC = 0.436
-                       - CH₄-C fração = 0.6% = 0.006
-                       - Fração matéria seca = 1 - umidade = 0.15
-                       - CH₄ por kg = TOC × CH₄-C fração × (16/12) × fração MS = 0.000523 kg CH₄/kg
-                       
-                    4. **Conversão para CO₂eq:**
-                       - GWP CH₄ = 27.9 kg CO₂eq/kg CH₄ (IPCC AR6 - 100 anos)
-                       - CO₂eq = CH₄ × 27.9
-                       
-                    **Suposições:**
-                    - Fração orgânica: 50% dos resíduos (ajustável)
-                    - Apenas a fração orgânica emite metano
-                    - Processos de reciclagem não emitem metano significativo
-                    - Kernel de decaimento NÃO normalizado para aterro (metodologia IPCC correta)
-                    """)
             
-            # SEÇÃO AMPLIADA: SIMULAÇÃO DE CENÁRIOS (ORIGINAL)
-            st.subheader("🔮 Simulação de Cenários Avançada")
-            
-            # Container principal da simulação
-            with st.container():
-                # Informações do cenário selecionado
-                fracoes = calcular_simulacao(massa_total_municipio, cenario)
-                
-                # Layout em 4 colunas para métricas principais
-                col_met1, col_met2, col_met3, col_met4 = st.columns(4)
-                
-                with col_met1:
-                    st.metric("Materiais Recicláveis", 
-                             f"{formatar_br(fracoes['Massa_Reciclagem'], 0)} t/ano",
-                             f"{fracoes['Reciclagem']*100:.1f}% do total")
-                
-                with col_met2:
-                    st.metric("Compostagem", 
-                             f"{formatar_br(fracoes['Massa_Compostagem'], 0)} t/ano",
-                             f"{fracoes['Compostagem']*100:.1f}% do total")
-                
-                with col_met3:
-                    st.metric("Emissões de GEE", 
-                             f"{formatar_br(fracoes['Emissões (t CO₂eq)'], 0)} t CO₂eq/ano")
-                
-                with col_met4:
-                    if fracoes['Redução Percentual'] > 0:
-                        st.metric("Redução de Emissões", 
-                                 f"{fracoes['Redução Percentual']:.1f}%",
-                                 f"{formatar_br(fracoes['Redução Absoluta'], 0)} t CO₂eq")
-                    else:
-                        st.metric("Redução de Emissões", "0%", "Cenário atual")
-                
-                # Separador
-                st.markdown("---")
-                
-                # GRÁFICOS AMPLIADOS (6 gráficos em 3x2)
-                st.markdown("##### 📊 Visualização Completa da Simulação")
-                fig_ampliada = criar_graficos_simulacao_ampliados(massa_total_municipio, cenario)
-                st.pyplot(fig_ampliada)
-                
-                # Separador
-                st.markdown("---")
-                
-                # TABELA COMPARATIVA DOS CENÁRIOS
-                st.markdown("##### 📋 Comparativo entre Cenários")
-                
-                # Dados para tabela comparativa
-                cenarios_comparar = ["Cenário Atual", "Cenário de Economia Circular", "Cenário Otimizado (Máxima Reciclagem)"]
-                dados_comparativos = []
-                
-                for cenario_comp in cenarios_comparar:
-                    dados_comp = calcular_simulacao(massa_total_municipio, cenario_comp)
-                    dados_comparativos.append({
-                        'Cenário': cenario_comp,
-                        'Aterro (%)': f"{dados_comp['Aterro']*100:.1f}",
-                        'Reciclagem (%)': f"{dados_comp['Reciclagem']*100:.1f}",
-                        'Compostagem (%)': f"{dados_comp['Compostagem']*100:.1f}",
-                        'Emissões (t CO₂eq)': formatar_br(dados_comp['Emissões (t CO₂eq)'], 0),
-                        'Redução (%)': f"{dados_comp['Redução Percentual']:.1f}" if dados_comp['Redução Percentual'] > 0 else "0,0",
-                        'Valor Total (R$)': formatar_br(dados_comp['Valor_Total_R$'], 0)
-                    })
-                
-                df_comparativo = pd.DataFrame(dados_comparativos)
-                
-                # Destacar o cenário selecionado
-                def highlight_selected(row):
-                    if row['Cenário'] == cenario:
-                        return ['background-color: #2ecc71; color: white'] * len(row)
-                    return [''] * len(row)
-                
-                st.dataframe(df_comparativo.style.apply(highlight_selected, axis=1), use_container_width=True)
-                
-                # Separador
-                st.markdown("---")
-                
-                # BENEFÍCIOS ECONÔMICOS DETALHADOS
-                st.markdown("##### 💰 Benefícios Econômicos Detalhados")
-                
-                if fracoes['Redução Percentual'] > 0:
-                    col_ben1, col_ben2, col_ben3, col_ben4 = st.columns(4)
-                    
-                    with col_ben1:
-                        st.metric("Valor da Reciclagem", 
-                                 f"R$ {formatar_br(fracoes['Valor_Reciclagem_R$'], 0)}",
-                                 "R$ 250 por tonelada")
-                    
-                    with col_ben2:
-                        st.metric("Valor da Compostagem", 
-                                 f"R$ {formatar_br(fracoes['Valor_Compostagem_R$'], 0)}",
-                                 "R$ 150 por tonelada")
-                    
-                    with col_ben3:
-                        st.metric("Valor do Carbono", 
-                                 f"R$ {formatar_br(fracoes['Valor_Carbono_R$'], 0)}",
-                                 "US$ 50 por t CO₂eq")
-                    
-                    with col_ben4:
-                        st.metric("Benefício Total", 
-                                 f"R$ {formatar_br(fracoes['Valor_Total_R$'], 0)}/ano",
-                                 "Economia anual")
-                
-                # Separador
-                st.markdown("---")
-                
-                # IMPACTO AMBIENTAL
-                st.markdown("##### 🌱 Impacto Ambiental")
-                
-                col_imp1, col_imp2, col_imp3 = st.columns(3)
-                
-                with col_imp1:
-                    # Equivalente em árvores plantadas (cada árvore absorve ~22 kg CO₂/ano)
-                    arvores_equivalentes = int(fracoes['Redução Absoluta'] * 1000 / 22) if fracoes['Redução Absoluta'] > 0 else 0
-                    st.metric("Equivalente em Árvores", 
-                             f"{formatar_br(arvores_equivalentes, 0)}",
-                             "Árvores necessárias para absorver CO₂")
-                
-                with col_imp2:
-                    # Equivalente em carros fora das ruas (cada carro emite ~2 t CO₂/ano)
-                    carros_equivalentes = int(fracoes['Redução Absoluta'] / 2) if fracoes['Redução Absoluta'] > 0 else 0
-                    st.metric("Equivalente em Carros", 
-                             f"{formatar_br(carros_equivalentes, 0)}",
-                             "Carros retirados das ruas")
-                
-                with col_imp3:
-                    # Economia de energia (reciclagem economiza ~95% de energia)
-                    energia_economizada = fracoes['Massa_Reciclagem'] * 0.95 * 14  # 14 MWh por tonelada reciclada
-                    st.metric("Energia Economizada", 
-                             f"{formatar_br(energia_economizada, 0)} MWh",
-                             "Pela reciclagem de materiais")
-                
-                # Separador
-                st.markdown("---")
-                
-                # DETALHES TÉCNICOS E METODOLOGIA
-                with st.expander("📚 Detalhes Técnicos da Simulação"):
-                    st.markdown(f"""
-                    **Metodologia da Simulação:**
-                    
-                    **1. Fatores de Emissão (t CO₂eq/t resíduo):**
-                    - Aterro sanitário: 0,80 t CO₂eq/t
-                    - Reciclagem: 0,15 t CO₂eq/t
-                    - Compostagem: 0,10 t CO₂eq/t
-                    
-                    **2. Valores Econômicos:**
-                    - Materiais recicláveis: R$ 250 por tonelada
-                    - Composto orgânico: R$ 150 por tonelada
-                    - Crédito de carbono: US$ 50 por t CO₂eq (R$ 5/US$)
-                    
-                    **3. Cenários Analisados:**
-                    - **Atual:** {formatar_br(massa_total_municipio * 0.85, 0)} t para aterro, {formatar_br(massa_total_municipio * 0.08, 0)} t recicláveis
-                    - **Economia Circular:** Redução de 45% no aterro, aumento de 337% na reciclagem
-                    - **Otimizado:** Redução de 65% no aterro, aumento de 463% na reciclagem
-                    
-                    **4. Benefícios Calculados:**
-                    - Valor total anual: R$ {formatar_br(fracoes['Valor_Total_R$'], 0)}
-                    - Redução de emissões: {fracoes['Redução Percentual']:.1f}%
-                    - Emissões evitadas: {formatar_br(fracoes['Redução Absoluta'], 0)} t CO₂eq/ano
-                    
-                    **5. Premissas:**
-                    - Baseado em dados SINISA 2023
-                    - Fatores IPCC para resíduos sólidos urbanos
-                    - Valores de mercado médios brasileiros
-                    - Câmbio: R$ 5,00 por US$ 1,00
-                    """)
-            
-        else:
-            st.warning(f"Município '{municipio_selecionado}' não encontrado nos dados.")
-            
-            # Sugestões de busca
-            st.info("""
-            **Possíveis razões:**
-            1. Município não preencheu o formulário SINISA 2023
-            2. Nome do município pode estar escrito de forma diferente
-            3. Município pode estar na lista de 'Não respondentes'
-            
-            **Sugestões:**
-            - Verificar a grafia do nome
-            - Tentar buscar sem acentos
-            - Testar outros municípios da lista
-            """)
-    else:
-        st.error("Não foi possível identificar a coluna de municípios.")
-    
-    # Análise comparativa por estado
-    if 'Estado' in colunas and 'Massa_Total' in colunas:
-        st.header("📈 Análise Comparativa por Estado")
+            # Tipos de coleta únicos
+            if 'Tipo_Coleta' in colunas:
+                tipos_coleta = dados_municipio[colunas['Tipo_Coleta']].dropna().unique()
+                st.metric(
+                    "Tipos de Coleta",
+                    f"{len(tipos_coleta)}",
+                    help="Diferentes tipos de coleta no município"
+                )
         
-        # Preparar dados
-        dados_estado = df.groupby(colunas['Estado']).agg(
-            Municipios=(colunas['Massa_Total'], 'count'),
-            Massa_Total=(colunas['Massa_Total'], 'sum'),
-            Massa_Media=(colunas['Massa_Total'], 'mean')
-        ).reset_index()
-        
-        # Renomear a coluna para facilitar
-        dados_estado = dados_estado.rename(columns={colunas['Estado']: 'Estado'})
-        dados_estado = dados_estado.sort_values('Massa_Total', ascending=False)
-        
-        # Layout para gráfico e tabela
-        col_graf, col_tab = st.columns([2, 1])
-        
-        with col_graf:
-            st.subheader("🏆 Top 10 Estados")
-            
-            fig, ax = plt.subplots(figsize=(10, 6))
-            top_10 = dados_estado.head(10)
-            
-            bars = ax.barh(top_10['Estado'], top_10['Massa_Total'], color='#3498db')
-            ax.set_xlabel('Massa Total Coletada (toneladas)')
-            ax.set_title('Top 10 Estados por Massa de Resíduos Coletados')
-            ax.invert_yaxis()
-            ax.grid(axis='x', alpha=0.3)
-            
-            # Formatar eixo x no padrão brasileiro
-            ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: formatar_br(x, 0)))
-            
-            # Adicionar valores formatados no padrão brasileiro
-            for bar in bars:
-                width = bar.get_width()
-                ax.text(width, bar.get_y() + bar.get_height()/2,
-                       f'{formatar_br(width, 0)}', ha='left', va='center', fontsize=9)
-            
-            st.pyplot(fig)
-        
-        with col_tab:
-            st.subheader("📋 Ranking Completo")
-            
-            # Tabela simplificada
-            tabela_resumo = dados_estado[['Estado', 'Massa_Total', 'Municipios']].copy()
-            tabela_resumo.columns = ['Estado', 'Massa (t)', 'Municípios']
-            tabela_resumo['Massa (t)'] = tabela_resumo['Massa (t)'].round(0)
-            
-            # Formatar a coluna de massa no padrão brasileiro
-            tabela_resumo['Massa (t)'] = tabela_resumo['Massa (t)'].apply(lambda x: formatar_br(x, 0))
-            tabela_resumo['Municípios'] = tabela_resumo['Municípios'].apply(lambda x: formatar_br(x, 0))
-            
-            st.dataframe(tabela_resumo.head(15), height=400, use_container_width=True)
-    
-    # Dados brutos (se solicitado)
-    if mostrar_dados and 'Massa_Total' in colunas:
-        with st.expander("📄 Dados Brutos (Amostra)"):
-            # Mostrar apenas colunas importantes
+        # Tabela resumida das rotas
+        with st.expander("📋 Ver todas as rotas de coleta"):
             colunas_para_mostrar = []
-            colunas_ja_adicionadas = set()
             
             for tipo, col in colunas.items():
-                if col in df.columns and col not in colunas_ja_adicionadas:
-                    colunas_para_mostrar.append(col)
-                    colunas_ja_adicionadas.add(col)
+                if tipo in ['Tipo_Coleta', 'Massa_Total', 'Destino_Texto', 'Agente_Executor']:
+                    if col in dados_municipio.columns:
+                        colunas_para_mostrar.append(col)
             
             if colunas_para_mostrar:
-                dados_amostra = df[colunas_para_mostrar].head(20).copy()
+                dados_display = dados_municipio[colunas_para_mostrar].copy()
+                dados_display.insert(0, 'Nº', range(1, len(dados_display) + 1))
                 
-                # Formatar colunas numéricas no padrão brasileiro
-                for col in dados_amostra.columns:
-                    try:
-                        col_data = dados_amostra[col]
-                        if hasattr(col_data, 'dtype'):
-                            dtype_str = str(col_data.dtype)
-                            if any(num_type in dtype_str for num_type in ['int', 'float', 'Int', 'Float']):
-                                col_name = str(col).lower()
-                                if 'população' in col_name or 'populacao' in col_name or 'pop' in col_name:
-                                    dados_amostra[col] = dados_amostra[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
-                                elif 'massa' in col_name or 'toneladas' in col_name:
-                                    dados_amostra[col] = dados_amostra[col].apply(lambda x: formatar_br(x, 1) if pd.notna(x) else x)
-                                else:
-                                    dados_amostra[col] = dados_amostra[col].apply(lambda x: formatar_br(x, 0) if pd.notna(x) else x)
-                    except:
-                        pass
+                # Formatar massa
+                if 'Massa_Total' in colunas and colunas['Massa_Total'] in dados_display.columns:
+                    dados_display[colunas['Massa_Total']] = dados_display[colunas['Massa_Total']].apply(
+                        lambda x: formatar_br(x) if pd.notna(x) else "N/A"
+                    )
                 
-                st.dataframe(dados_amostra, use_container_width=True)
+                st.dataframe(dados_display, use_container_width=True, height=300)
+        
+        # Executar cálculos se solicitado
+        if st.session_state.get('calcular_emissoes', False):
+            st.header("🔬 Cálculo de Emissões de Metano")
+            
+            with st.spinner(f'Calculando emissões para {len(dados_municipio)} rotas...'):
+                
+                # Inicializar arrays para resultados
+                resultados = []
+                
+                # Processar cada rota
+                for idx, rota in dados_municipio.iterrows():
+                    # Obter massa total da rota
+                    if 'Massa_Total' in colunas and colunas['Massa_Total'] in rota:
+                        massa_rota_ton = rota[colunas['Massa_Total']]
+                        if pd.isna(massa_rota_ton) or massa_rota_ton <= 0:
+                            continue
+                    else:
+                        continue
+                    
+                    # Obter tipo de coleta
+                    tipo_coleta = ""
+                    if 'Tipo_Coleta' in colunas and colunas['Tipo_Coleta'] in rota:
+                        tipo_coleta = rota[colunas['Tipo_Coleta']]
+                    
+                    # Classificar fração orgânica baseada no tipo de coleta
+                    fracao_organica = classificar_fração_organica(tipo_coleta)
+                    
+                    # Calcular massa orgânica (em kg)
+                    massa_organica_kg = massa_rota_ton * fracao_organica * 1000
+                    
+                    # Calcular emissões para cada tecnologia
+                    # Aterro
+                    ch4_aterro, potencial_aterro, DOCf, fracao_emitida = calcular_metano_aterro(
+                        massa_organica_kg, umidade, temperatura, doc_val, dias_simulacao
+                    )
+                    
+                    # Compostagem Termofílica
+                    ch4_compost = calcular_metano_compostagem_termofilica(
+                        massa_organica_kg, umidade
+                    )
+                    
+                    # Vermicompostagem
+                    ch4_vermi = calcular_metano_vermicompostagem(
+                        massa_organica_kg, umidade
+                    )
+                    
+                    # Armazenar resultados
+                    resultados.append({
+                        'Tipo_Coleta': tipo_coleta if tipo_coleta else "Não informado",
+                        'Massa_Total_ton': massa_rota_ton,
+                        'Fração_Orgânica': fracao_organica,
+                        'Massa_Orgânica_kg': massa_organica_kg,
+                        'CH4_Aterro_kg': ch4_aterro,
+                        'CH4_Compostagem_kg': ch4_compost,
+                        'CH4_Vermicompostagem_kg': ch4_vermi,
+                        'Redução_Compost_vs_Aterro_kg': ch4_aterro - ch4_compost,
+                        'Redução_Vermi_vs_Aterro_kg': ch4_aterro - ch4_vermi
+                    })
+                
+                # Criar DataFrame com resultados
+                if resultados:
+                    df_resultados = pd.DataFrame(resultados)
+                    
+                    # Calcular totais
+                    totais = {
+                        'Massa_Total_ton': df_resultados['Massa_Total_ton'].sum(),
+                        'Massa_Orgânica_kg': df_resultados['Massa_Orgânica_kg'].sum(),
+                        'CH4_Aterro_kg': df_resultados['CH4_Aterro_kg'].sum(),
+                        'CH4_Compostagem_kg': df_resultados['CH4_Compostagem_kg'].sum(),
+                        'CH4_Vermicompostagem_kg': df_resultados['CH4_Vermicompostagem_kg'].sum()
+                    }
+                    
+                    totais['Redução_Compost_vs_Aterro_kg'] = totais['CH4_Aterro_kg'] - totais['CH4_Compostagem_kg']
+                    totais['Redução_Vermi_vs_Aterro_kg'] = totais['CH4_Aterro_kg'] - totais['CH4_Vermicompostagem_kg']
+                    
+                    # Calcular percentuais de redução
+                    totais['Redução_Compost_%'] = (totais['Redução_Compost_vs_Aterro_kg'] / totais['CH4_Aterro_kg'] * 100) if totais['CH4_Aterro_kg'] > 0 else 0
+                    totais['Redução_Vermi_%'] = (totais['Redução_Vermi_vs_Aterro_kg'] / totais['CH4_Aterro_kg'] * 100) if totais['CH4_Aterro_kg'] > 0 else 0
+                    
+                    # 1. EXIBIR RESULTADOS PRINCIPAIS
+                    st.header("📊 Resultados Principais")
+                    
+                    col_res1, col_res2, col_res3 = st.columns(3)
+                    
+                    with col_res1:
+                        st.metric(
+                            "Aterro Sanitário",
+                            f"{formatar_br(totais['CH4_Aterro_kg'])} kg CH₄",
+                            f"{formatar_br(totais['CH4_Aterro_kg']/1000)} ton",
+                            delta_color="off"
+                        )
+                    
+                    with col_res2:
+                        st.metric(
+                            "Compostagem Termofílica",
+                            f"{formatar_br(totais['CH4_Compostagem_kg'])} kg CH₄",
+                            f"-{formatar_br(totais['Redução_Compost_%'])}%",
+                            delta_color="inverse"
+                        )
+                    
+                    with col_res3:
+                        st.metric(
+                            "Vermicompostagem",
+                            f"{formatar_br(totais['CH4_Vermicompostagem_kg'])} kg CH₄",
+                            f"-{formatar_br(totais['Redução_Vermi_%'])}%",
+                            delta_color="inverse"
+                        )
+                    
+                    # Informação sobre fração orgânica
+                    st.info(f"""
+                    **📈 Análise da Fração Orgânica:**
+                    - **Massa total coletada:** {formatar_br(totais['Massa_Total_ton'])} ton/ano
+                    - **Massa orgânica estimada:** {formatar_br(totais['Massa_Orgânica_kg']/1000)} ton/ano
+                    - **Fração orgânica média:** {(totais['Massa_Orgânica_kg']/(totais['Massa_Total_ton']*1000)*100):.1f}%
+                    - **Método:** Classificação automática baseada no "Tipo de coleta executada"
+                    """)
+                    
+                    # 2. GRÁFICO COMPARATIVO
+                    st.subheader("📈 Comparação de Emissões por Tecnologia")
+                    
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    
+                    tecnologias = ['Aterro', 'Compostagem\nTermofílica', 'Vermicompostagem']
+                    valores = [
+                        totais['CH4_Aterro_kg'],
+                        totais['CH4_Compostagem_kg'],
+                        totais['CH4_Vermicompostagem_kg']
+                    ]
+                    cores = ['#e74c3c', '#3498db', '#2ecc71']
+                    
+                    bars = ax.bar(tecnologias, valores, color=cores)
+                    ax.set_ylabel('Metano Total (kg CH₄)')
+                    ax.set_title(f'Emissões Totais de Metano - {municipio_selecionado} ({anos_simulacao} anos)')
+                    ax.grid(True, alpha=0.3, axis='y')
+                    ax.yaxis.set_major_formatter(FuncFormatter(br_format))
+                    
+                    for bar, val in zip(bars, valores):
+                        height = bar.get_height()
+                        ax.text(bar.get_x() + bar.get_width()/2, height,
+                               f'{formatar_br(val)}', ha='center', va='bottom', fontweight='bold')
+                    
+                    st.pyplot(fig)
+                    
+                    # 3. GRÁFICO DE REDUÇÃO
+                    st.subheader("📉 Redução de Emissões vs Aterro")
+                    
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    
+                    reducoes = [
+                        totais['Redução_Compost_vs_Aterro_kg'],
+                        totais['Redução_Vermi_vs_Aterro_kg']
+                    ]
+                    reducoes_percent = [
+                        totais['Redução_Compost_%'],
+                        totais['Redução_Vermi_%']
+                    ]
+                    tecnologias_reducao = ['Compostagem\nTermofílica', 'Vermicompostagem']
+                    cores_reducao = ['#3498db', '#2ecc71']
+                    
+                    x = np.arange(len(tecnologias_reducao))
+                    width = 0.35
+                    
+                    ax.bar(x - width/2, reducoes, width, label='Redução (kg CH₄)', color=cores_reducao)
+                    ax.set_ylabel('Redução (kg CH₄)')
+                    ax.set_xlabel('Tecnologia')
+                    ax.set_title('Redução de Emissões vs Cenário Aterro')
+                    ax.set_xticks(x)
+                    ax.set_xticklabels(tecnologias_reducao)
+                    ax.yaxis.set_major_formatter(FuncFormatter(br_format))
+                    
+                    # Adicionar percentuais
+                    ax2 = ax.twinx()
+                    ax2.bar(x + width/2, reducoes_percent, width, label='Redução (%)', 
+                           color=[c.replace('0.7', '0.4') for c in cores_reducao], alpha=0.7)
+                    ax2.set_ylabel('Redução (%)')
+                    
+                    # Adicionar valores nos gráficos
+                    for i, (kg, perc) in enumerate(zip(reducoes, reducoes_percent)):
+                        ax.text(i - width/2, kg, f'{formatar_br(kg)} kg', 
+                               ha='center', va='bottom', fontweight='bold')
+                        ax2.text(i + width/2, perc, f'{perc:.1f}%', 
+                                ha='center', va='bottom', fontweight='bold')
+                    
+                    ax.grid(True, alpha=0.3)
+                    st.pyplot(fig)
+                    
+                    # 4. CONVERSÃO PARA CO₂eq (opcional)
+                    if usar_gwp:
+                        st.subheader("🌍 Conversão para CO₂eq (GWP 20 anos)")
+                        
+                        # Converter para CO₂eq
+                        co2eq_aterro = totais['CH4_Aterro_kg'] * gwp_ch4 / 1000
+                        co2eq_compost = totais['CH4_Compostagem_kg'] * gwp_ch4 / 1000
+                        co2eq_vermi = totais['CH4_Vermicompostagem_kg'] * gwp_ch4 / 1000
+                        
+                        col_co2eq1, col_co2eq2, col_co2eq3 = st.columns(3)
+                        
+                        with col_co2eq1:
+                            st.metric(
+                                "Aterro (CO₂eq)",
+                                f"{formatar_br(co2eq_aterro)} t",
+                                f"GWP = {gwp_ch4}"
+                            )
+                        
+                        with col_co2eq2:
+                            reducao_co2eq_compost = co2eq_aterro - co2eq_compost
+                            st.metric(
+                                "Compostagem (CO₂eq)",
+                                f"{formatar_br(co2eq_compost)} t",
+                                f"-{formatar_br(reducao_co2eq_compost)} t",
+                                delta_color="inverse"
+                            )
+                        
+                        with col_co2eq3:
+                            reducao_co2eq_vermi = co2eq_aterro - co2eq_vermi
+                            st.metric(
+                                "Vermicompostagem (CO₂eq)",
+                                f"{formatar_br(co2eq_vermi)} t",
+                                f"-{formatar_br(reducao_co2eq_vermi)} t",
+                                delta_color="inverse"
+                            )
+                        
+                        # Comparação com Script 2
+                        if massa_organica_kg > 0:
+                            # Calcular para 100 kg/dia equivalente
+                            equivalente_100kg_dia = (totais['Massa_Orgânica_kg'] / 365) / 100
+                            st.info(f"""
+                            **🔗 Comparação com Script 2 (Tabela 18):**
+                            
+                            **Equivalente a:** {formatar_br(equivalente_100kg_dia)} × 100 kg/dia
+                            **CO₂eq evitado (vermicompostagem):** {formatar_br(reducao_co2eq_vermi)} t
+                            
+                            *Script 2 mostra 1.405,87 t CO₂eq para 100 kg/dia × 20 anos com vermicompostagem*
+                            """)
+                    
+                    # 5. ANÁLISE POR TIPO DE COLETA
+                    if mostrar_detalhes and len(df_resultados) > 1:
+                        st.subheader("📋 Análise Detalhada por Tipo de Coleta")
+                        
+                        # Agrupar por tipo de coleta
+                        grupo_tipo_coleta = df_resultados.groupby('Tipo_Coleta').agg({
+                            'Massa_Total_ton': 'sum',
+                            'Fração_Orgânica': 'mean',
+                            'CH4_Aterro_kg': 'sum',
+                            'CH4_Compostagem_kg': 'sum',
+                            'CH4_Vermicompostagem_kg': 'sum'
+                        }).reset_index()
+                        
+                        # Calcular percentuais
+                        grupo_tipo_coleta['Redução_Compost_%'] = (
+                            (grupo_tipo_coleta['CH4_Aterro_kg'] - grupo_tipo_coleta['CH4_Compostagem_kg']) / 
+                            grupo_tipo_coleta['CH4_Aterro_kg'] * 100
+                        ).round(1)
+                        
+                        grupo_tipo_coleta['Redução_Vermi_%'] = (
+                            (grupo_tipo_coleta['CH4_Aterro_kg'] - grupo_tipo_coleta['CH4_Vermicompostagem_kg']) / 
+                            grupo_tipo_coleta['CH4_Aterro_kg'] * 100
+                        ).round(1)
+                        
+                        # Ordenar por massa
+                        grupo_tipo_coleta = grupo_tipo_coleta.sort_values('Massa_Total_ton', ascending=False)
+                        
+                        # Exibir tabela
+                        st.dataframe(grupo_tipo_coleta, use_container_width=True)
+                        
+                        # Gráfico de contribuição por tipo de coleta
+                        fig, ax = plt.subplots(figsize=(12, 6))
+                        
+                        # Agrupar tipos menores em "Outros"
+                        if len(grupo_tipo_coleta) > 8:
+                            principal = grupo_tipo_coleta.head(7)
+                            outros = grupo_tipo_coleta.iloc[7:].sum()
+                            outros['Tipo_Coleta'] = 'Outros'
+                            principal = pd.concat([principal, pd.DataFrame([outros])], ignore_index=True)
+                        else:
+                            principal = grupo_tipo_coleta.copy()
+                        
+                        ax.pie(principal['Massa_Total_ton'], 
+                              labels=principal['Tipo_Coleta'],
+                              autopct='%1.1f%%',
+                              startangle=90)
+                        ax.set_title('Distribuição da Massa por Tipo de Coleta')
+                        
+                        st.pyplot(fig)
+                    
+                    # 6. RESUMO FINAL
+                    st.subheader("📄 Resumo Executivo")
+                    
+                    col_resumo1, col_resumo2 = st.columns(2)
+                    
+                    with col_resumo1:
+                        st.markdown("**🌱 Benefícios Ambientais:**")
+                        st.markdown(f"""
+                        - **Metano evitado com compostagem:** {formatar_br(totais['Redução_Compost_vs_Aterro_kg'])} kg CH₄
+                        - **Metano evitado com vermicompostagem:** {formatar_br(totais['Redução_Vermi_vs_Aterro_kg'])} kg CH₄
+                        - **Redução percentual máxima:** {totais['Redução_Vermi_%']:.1f}% (vermicompostagem)
+                        """)
+                        
+                        if usar_gwp:
+                            st.markdown(f"""
+                            - **CO₂eq evitado com compostagem:** {formatar_br(reducao_co2eq_compost)} t
+                            - **CO₂eq evitado com vermicompostagem:** {formatar_br(reducao_co2eq_vermi)} t
+                            """)
+                    
+                    with col_resumo2:
+                        st.markdown("**📊 Dados do Município:**")
+                        st.markdown(f"""
+                        - **Município:** {municipio_selecionado}
+                        - **Rotas analisadas:** {len(dados_municipio)}
+                        - **Massa total anual:** {formatar_br(totais['Massa_Total_ton'])} ton
+                        - **Fração orgânica estimada:** {(totais['Massa_Orgânica_kg']/(totais['Massa_Total_ton']*1000)*100):.1f}%
+                        - **Período de análise:** {anos_simulacao} anos ({dias_simulacao} dias)
+                        """)
+                    
+                    # 7. RECOMENDAÇÕES
+                    st.subheader("💡 Recomendações Técnicas")
+                    
+                    if totais['Redução_Vermi_%'] > 90:
+                        st.success("""
+                        **✅ Prioridade Alta para Vermicompostagem:**
+                        - Vermicompostagem reduz mais de 90% das emissões vs aterro
+                        - Recomenda-se implementação em larga escala
+                        - Benefício máximo para resíduos com alta fração orgânica
+                        """)
+                    elif totais['Redução_Compost_%'] > 80:
+                        st.info("""
+                        **📈 Compostagem como Alternativa Viável:**
+                        - Compostagem termofílica reduz mais de 80% das emissões
+                        - Tecnologia mais simples que vermicompostagem
+                        - Adequada para municípios com menor capacidade técnica
+                        """)
+                    else:
+                        st.warning("""
+                        **⚠️ Potencial Limitado de Redução:**
+                        - Fração orgânica relativamente baixa
+                        - Considerar separação na fonte para aumentar eficiência
+                        - Avaliar outros benefícios (reciclagem, reutilização)
+                        """)
+                    
+                else:
+                    st.warning("Não foi possível calcular emissões para este município.")
     
-    # Seção de informações técnicas
-    with st.expander("📚 Informações Técnicas e Metodologia"):
-        st.markdown(f"""
-        ## 📊 Fonte dos Dados
+    else:
+        st.warning(f"Município '{municipio_selecionado}' não encontrado nos dados SINISA.")
         
-        **Sistema Nacional de Informações sobre Saneamento (SINISA) 2023**
-        
-        ## ⚙️ Metodologia de Análise
-        
-        **Filtro aplicado:**
-        - Apenas registros com valor 'Sim' na primeira coluna (Coluna A)
-        - Total de {formatar_br(12822, 0)} registros válidos (94,1% do total)
-        
-        **Colunas principais utilizadas:**
-        - Estado: Coluna D (Col_3)
-        - Região: Coluna E (Col_4)
-        - População: Coluna J (Col_9) - População municipal
-        - Tipo de Coleta: Coluna Q (Col_16) - "Tipo de coleta executada"
-        - Massa Total: Coluna Y (Col_24) - "Massa de resíduos sólidos total coletada para a rota cadastrada"
-        - Destino (Texto): Coluna AD (Col_28) - "Tipo de unidade de destino" (ex: Aterro controlado)
-        - Agente Executor: Coluna AE (Col_29) - "Tipo de executor do serviço de destino dos resíduos" (ex: Agente privado)
-        
-        ## 🔬 Metodologia de Cálculo de Metano
-        
-        **Aterro Sanitário (IPCC 2006):**
-        - CH₄ por kg resíduo: 0.0583 kg
-        - CO₂eq por kg resíduo: 1.627 kg (GWP CH₄ = 27.9)
-        - CO₂eq por t resíduo: 1.627 t
-        
-        **Vermicompostagem (Yang et al. 2017):**
-        - CH₄ por kg resíduo: 0.000113 kg
-        - CO₂eq por kg resíduo: 0.00315 kg
-        - CO₂eq por t resíduo: 0.00315 t
-        
-        **Compostagem Termofílica (Yang et al. 2017):**
-        - CH₄ por kg resíduo: 0.000523 kg
-        - CO₂eq por kg resíduo: 0.0146 kg
-        - CO₂eq por t resíduo: 0.0146 t
-        
-        **Suposições:**
-        - Fração orgânica: 50% dos resíduos
-        - Apenas fração orgânica emite metano
-        - Umidade: 85%
-        - Temperatura: 25°C
-        - Kernel de decaimento NÃO normalizado (metodologia IPCC correta)
-        
-        ## 🎯 Limitações
-        
-        1. Dados auto-declarados pelos municípios
-        2. Variações na qualidade do preenchimento
-        3. Para municípios sem dados de população, usa estimativa baseada na média nacional
-        4. Fatores de emissão médios, não específicos por tecnologia
+        # Sugestões
+        st.info("""
+        **Sugestões:**
+        1. Verifique a grafia do município
+        2. Use acentos corretamente
+        3. Tente o nome completo (ex: "SÃO PAULO" em vez de "SP")
+        4. Verifique se o município respondeu ao SINISA 2023
         """)
-    
-    # Rodapé
-    st.markdown("---")
-    st.markdown("""
-    <div style='text-align: center'>
-        <p>Desenvolvido para análise de dados SINISA 2023 | Dados: Sistema Nacional de Informações sobre Saneamento</p>
-        <p>Última atualização: Janeiro 2026 | Versão 5.0 (com cálculos detalhados de metano)</p>
-    </div>
-    """, unsafe_allow_html=True)
+else:
+    st.error("Não foi possível identificar a coluna de municípios no dataset.")
 
-if __name__ == "__main__":
-    main()
+# =============================================================================
+# RODAPÉ
+# =============================================================================
+st.markdown("---")
+st.markdown("""
+**📚 Fontes e Metodologia:**
+- **Dados:** SINISA 2023 - Sistema Nacional de Informações sobre Saneamento
+- **Cálculo Aterro:** IPCC (2006) - Guidelines for National Greenhouse Gas Inventories
+- **Cálculo Compostagem/Vermicompostagem:** Yang et al. (2017)
+- **Classificação Fração Orgânica:** Baseada em "Tipo de coleta executada"
+- **Método Corrigido:** Kernel NÃO normalizado para aterro
+
+**⚙️ Parâmetros Padrão:**
+- **Período:** 20 anos (7.300 dias)
+- **Umidade:** 85%
+- **Temperatura:** 25°C
+- **DOC:** 0.15 (fração de carbono orgânico degradável)
+- **GWP CH₄ (20 anos):** 79.7 (IPCC AR6)
+
+**🔍 Classificação de Fração Orgânica:**
+- **Alta (60%):** Domiciliar, orgânico, vegetal, fruta, alimento
+- **Média (40%):** Comercial, serviços, pública, varrição
+- **Baixa (10%):** Industrial, construção, saúde, seletiva
+- **Padrão (30%):** Tipos não classificados
+""")
