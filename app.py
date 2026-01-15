@@ -185,7 +185,7 @@ def obter_cotacoes_tempo_real():
     }
 
 # =============================================================================
-# FUNÇÕES DE CÁLCULO DE POTENCIAL DE METANO
+# FUNÇÕES DE CÁLCULO DE POTENCIAL DE METANO (PARA ABA 1)
 # =============================================================================
 
 def calcular_potencial_metano_aterro(residuos_kg, umidade, temperatura, dias=365):
@@ -278,7 +278,137 @@ def calcular_emissoes_compostagem_lote(residuos_kg, umidade, dias=50):
     return emissoes_CH4, ch4_total_por_lote
 
 # =============================================================================
-# DADOS DAS CIDADES BRASILEIRAS
+# FUNÇÕES DE CÁLCULO PARA ABA 2 (ENTRADA CONTÍNUA) - DO CÓDIGO ORIGINAL
+# =============================================================================
+
+# Parâmetros fixos (DO CÓDIGO ORIGINAL)
+T = 25  # Temperatura média (ºC)
+DOC = 0.15  # Carbono orgânico degradável (fração)
+DOCf_val = 0.0147 * T + 0.28
+MCF = 1  # Fator de correção de metano
+F = 0.5  # Fração de metano no biogás
+OX = 0.1  # Fator de oxidação
+Ri = 0.0  # Metano recuperado
+
+# Constante de decaimento (fixa como no script anexo)
+k_ano = 0.06  # Constante de decaimento anual
+
+# Vermicompostagem (Yang et al. 2017) - valores fixos
+TOC_YANG = 0.436  # Fração de carbono orgânico total
+TN_YANG = 14.2 / 1000  # Fração de nitrogênio total
+CH4_C_FRAC_YANG = 0.13 / 100  # Fração do TOC emitida como CH4-C (fixo)
+N2O_N_FRAC_YANG = 0.92 / 100  # Fração do TN emitida como N2O-N (fixo)
+DIAS_COMPOSTAGEM = 50  # Período total de compostagem
+
+# GWP (IPCC AR6)
+GWP_CH4_20 = 79.7
+GWP_N2O_20 = 273
+
+# Perfil temporal N2O (Wang et al. 2017)
+PERFIL_N2O = {1: 0.10, 2: 0.30, 3: 0.40, 4: 0.15, 5: 0.05}
+
+# Emissões pré-descarte (Feng et al. 2020)
+CH4_pre_descarte_ugC_por_kg_h_min = 0.18
+CH4_pre_descarte_ugC_por_kg_h_max = 5.38
+CH4_pre_descarte_ugC_por_kg_h_media = 2.78
+
+fator_conversao_C_para_CH4 = 16/12
+CH4_pre_descarte_ugCH4_por_kg_h_media = CH4_pre_descarte_ugC_por_kg_h_media * fator_conversao_C_para_CH4
+CH4_pre_descarte_g_por_kg_dia = CH4_pre_descarte_ugCH4_por_kg_h_media * 24 / 1_000_000
+
+N2O_pre_descarte_mgN_por_kg = 20.26
+N2O_pre_descarte_mgN_por_kg_dia = N2O_pre_descarte_mgN_por_kg / 3
+N2O_pre_descarte_g_por_kg_dia = N2O_pre_descarte_mgN_por_kg_dia * (44/28) / 1000
+
+PERFIL_N2O_PRE_DESCARTE = {1: 0.8623, 2: 0.10, 3: 0.0377}
+
+def ajustar_emissoes_pre_descarte(O2_concentracao):
+    ch4_ajustado = CH4_pre_descarte_g_por_kg_dia
+
+    if O2_concentracao == 21:
+        fator_n2o = 1.0
+    elif O2_concentracao == 10:
+        fator_n2o = 11.11 / 20.26
+    elif O2_concentracao == 1:
+        fator_n2o = 7.86 / 20.26
+    else:
+        fator_n2o = 1.0
+
+    n2o_ajustado = N2O_pre_descarte_g_por_kg_dia * fator_n2o
+    return ch4_ajustado, n2o_ajustado
+
+def calcular_emissoes_pre_descarte(O2_concentracao, dias_simulacao, residuos_kg_dia):
+    ch4_ajustado, n2o_ajustado = ajustar_emissoes_pre_descarte(O2_concentracao)
+
+    emissoes_CH4_pre_descarte_kg = np.full(dias_simulacao, residuos_kg_dia * ch4_ajustado / 1000)
+    emissoes_N2O_pre_descarte_kg = np.zeros(dias_simulacao)
+
+    for dia_entrada in range(dias_simulacao):
+        for dias_apos_descarte, fracao in PERFIL_N2O_PRE_DESCARTE.items():
+            dia_emissao = dia_entrada + dias_apos_descarte - 1
+            if dia_emissao < dias_simulacao:
+                emissoes_N2O_pre_descarte_kg[dia_emissao] += (
+                    residuos_kg_dia * n2o_ajustado * fracao / 1000
+                )
+
+    return emissoes_CH4_pre_descarte_kg, emissoes_N2O_pre_descarte_kg
+
+def calcular_emissoes_aterro(params, dias_simulacao, residuos_kg_dia, massa_exposta_kg, h_exposta):
+    umidade_val, temp_val, doc_val = params
+
+    fator_umid = (1 - umidade_val) / (1 - 0.55)
+    f_aberto = np.clip((massa_exposta_kg / residuos_kg_dia) * (h_exposta / 24), 0.0, 1.0)
+    docf_calc = 0.0147 * temp_val + 0.28
+
+    potencial_CH4_por_kg = doc_val * docf_calc * MCF * F * (16/12) * (1 - Ri) * (1 - OX)
+    potencial_CH4_lote_diario = residuos_kg_dia * potencial_CH4_por_kg
+
+    t = np.arange(1, dias_simulacao + 1, dtype=float)
+    kernel_ch4 = np.exp(-k_ano * (t - 1) / 365.0) - np.exp(-k_ano * t / 365.0)
+    entradas_diarias = np.ones(dias_simulacao, dtype=float)
+    emissoes_CH4 = fftconvolve(entradas_diarias, kernel_ch4, mode='full')[:dias_simulacao]
+    emissoes_CH4 *= potencial_CH4_lote_diario
+
+    E_aberto = 1.91
+    E_fechado = 2.15
+    E_medio = f_aberto * E_aberto + (1 - f_aberto) * E_fechado
+    E_medio_ajust = E_medio * fator_umid
+    emissao_diaria_N2O = (E_medio_ajust * (44/28) / 1_000_000) * residuos_kg_dia
+
+    kernel_n2o = np.array([PERFIL_N2O.get(d, 0) for d in range(1, 6)], dtype=float)
+    emissoes_N2O = fftconvolve(np.full(dias_simulacao, emissao_diaria_N2O), kernel_n2o, mode='full')[:dias_simulacao]
+
+    O2_concentracao = 21
+    emissoes_CH4_pre_descarte_kg, emissoes_N2O_pre_descarte_kg = calcular_emissoes_pre_descarte(O2_concentracao, dias_simulacao, residuos_kg_dia)
+
+    total_ch4_aterro_kg = emissoes_CH4 + emissoes_CH4_pre_descarte_kg
+    total_n2o_aterro_kg = emissoes_N2O + emissoes_N2O_pre_descarte_kg
+
+    return total_ch4_aterro_kg, total_n2o_aterro_kg
+
+def calcular_emissoes_vermi(params, dias_simulacao, residuos_kg_dia):
+    umidade_val, temp_val, doc_val = params
+    fracao_ms = 1 - umidade_val
+    
+    # Usando valores fixos para CH4_C_FRAC_YANG e N2O_N_FRAC_YANG
+    ch4_total_por_lote = residuos_kg_dia * (TOC_YANG * CH4_C_FRAC_YANG * (16/12) * fracao_ms)
+    n2o_total_por_lote = residuos_kg_dia * (TN_YANG * N2O_N_FRAC_YANG * (44/28) * fracao_ms)
+
+    emissoes_CH4 = np.zeros(dias_simulacao)
+    emissoes_N2O = np.zeros(dias_simulacao)
+
+    for dia_entrada in range(dias_simulacao):
+        for dia_compostagem in range(DIAS_COMPOSTAGEM):
+            dia_emissao = dia_entrada + dia_compostagem
+            if dia_emissao < dias_simulacao:
+                # Distribuição simplificada - usar distribuição uniforme
+                emissoes_CH4[dia_emissao] += ch4_total_por_lote * (1/DIAS_COMPOSTAGEM)
+                emissoes_N2O[dia_emissao] += n2o_total_por_lote * (1/DIAS_COMPOSTAGEM)
+
+    return emissoes_CH4, emissoes_N2O
+
+# =============================================================================
+# DADOS DAS CIDADES BRASILEIRAS (PARA ABA 3)
 # =============================================================================
 
 CIDADES_BRASIL = {
@@ -355,7 +485,7 @@ CIDADES_BRASIL = {
 }
 
 # =============================================================================
-# FUNÇÃO PARA CALCULAR POTENCIAL POR CIDADE
+# FUNÇÃO PARA CALCULAR POTENCIAL POR CIDADE (ABA 3)
 # =============================================================================
 
 def calcular_potencial_cidade(cidade, dados_cidade, preco_carbono_eur, taxa_cambio, dias_simulacao=365):
@@ -384,35 +514,20 @@ def calcular_potencial_cidade(cidade, dados_cidade, preco_carbono_eur, taxa_camb
     emissoes_vermi = np.zeros(dias_simulacao)
     emissoes_vermi[:dias_vermi] = emissoes_vermi_temp
     
-    # Calcular potencial de metano na compostagem
-    dias_compost = min(50, dias_simulacao)
-    emissoes_compost_temp, total_compost = calcular_emissoes_compostagem_lote(
-        residuos_organicos_ano, umidade, dias_compost
-    )
-    emissoes_compost = np.zeros(dias_simulacao)
-    emissoes_compost[:dias_compost] = emissoes_compost_temp
-    
-    # Calcular totais acumulados
+    # Calcular potenciais acumulados
     total_aterro_emitido = emissoes_aterro.sum()
     total_vermi_emitido = emissoes_vermi.sum()
-    total_compost_emitido = emissoes_compost.sum()
     
-    # Calcular reduções
+    # Calcular redução
     reducao_vermi = total_aterro_emitido - total_vermi_emitido
-    reducao_compost = total_aterro_emitido - total_compost_emitido
     
     # Converter para CO₂eq (GWP CH₄ = 27.9)
     GWP_CH4 = 27.9
-    
     reducao_vermi_tco2eq = reducao_vermi * GWP_CH4 / 1000
-    reducao_compost_tco2eq = reducao_compost * GWP_CH4 / 1000
     
     # Calcular valor financeiro
     valor_vermi_eur = reducao_vermi_tco2eq * preco_carbono_eur
     valor_vermi_brl = valor_vermi_eur * taxa_cambio
-    
-    valor_compost_eur = reducao_compost_tco2eq * preco_carbono_eur
-    valor_compost_brl = valor_compost_eur * taxa_cambio
     
     return {
         "cidade": cidade,
@@ -422,41 +537,37 @@ def calcular_potencial_cidade(cidade, dados_cidade, preco_carbono_eur, taxa_camb
         "residuos_organicos_ano_ton": residuos_organicos_ano / 1000,
         "total_aterro_emitido_kg": total_aterro_emitido,
         "total_vermi_emitido_kg": total_vermi_emitido,
-        "total_compost_emitido_kg": total_compost_emitido,
         "reducao_vermi_tco2eq": reducao_vermi_tco2eq,
-        "reducao_compost_tco2eq": reducao_compost_tco2eq,
         "valor_vermi_eur": valor_vermi_eur,
         "valor_vermi_brl": valor_vermi_brl,
-        "valor_compost_eur": valor_compost_eur,
-        "valor_compost_brl": valor_compost_brl,
         "valor_por_ton_residuo_eur": valor_vermi_eur / (residuos_organicos_ano / 1000),
         "valor_por_ton_residuo_brl": valor_vermi_brl / (residuos_organicos_ano / 1000)
     }
 
 # =============================================================================
-# INTERFACE PRINCIPAL
+# INICIALIZAÇÃO DA SESSION STATE
 # =============================================================================
-
-# Título do aplicativo
-st.title("🌱 SINISA - Simulador de Potencial de Metano e Créditos de Carbono")
-st.markdown("""
-**Sistema Integrado de Análise de Potencial de Créditos de Carbono para Gestão de Resíduos Orgânicos**
-
-Este aplicativo calcula o potencial de geração de créditos de carbono através do desvio de resíduos orgânicos
-de aterros sanitários para processos de compostagem e vermicompostagem.
-""")
-
-# =============================================================================
-# SEÇÃO DE COTAÇÃO EM TEMPO REAL
-# =============================================================================
-
-st.header("💰 Cotações em Tempo Real")
 
 # Inicializar session state para cotações
 if 'cotacoes' not in st.session_state:
     with st.spinner("🔄 Obtendo cotações em tempo real..."):
         st.session_state.cotacoes = obter_cotacoes_tempo_real()
         st.session_state.ultima_atualizacao = datetime.now()
+
+# =============================================================================
+# CABEÇALHO PRINCIPAL
+# =============================================================================
+
+st.title("🌱 SINISA - Simulador de Potencial de Metano e Créditos de Carbono")
+st.markdown("""
+**Sistema Integrado de Análise de Potencial de Créditos de Carbono para Gestão de Resíduos Orgânicos**
+""")
+
+# =============================================================================
+# SEÇÃO DE COTAÇÃO EM TEMPO REAL (COMPARTILHADA)
+# =============================================================================
+
+st.header("💰 Cotações em Tempo Real")
 
 # Botão para atualizar cotações
 col1, col2, col3 = st.columns([1, 2, 1])
@@ -493,334 +604,724 @@ with col3:
         help="Preço do carbono convertido para Reais"
     )
 
-# Informações adicionais
 st.caption(f"🕒 Última atualização: {st.session_state.ultima_atualizacao.strftime('%d/%m/%Y %H:%M:%S')}")
 
 # =============================================================================
-# SEÇÃO DE ANÁLISE POR CIDADE
+# ABAS PRINCIPAIS
 # =============================================================================
 
-st.header("🏙️ Análise de Potencial por Cidade")
+tab1, tab2, tab3 = st.tabs([
+    "📦 Análise por Lote Único (100 kg)",
+    "📈 Entrada Contínua (kg/dia)", 
+    "🏙️ Potencial por Cidade"
+])
 
-st.markdown("""
-Selecione uma ou mais cidades para analisar o potencial de créditos de carbono através do desvio
-de resíduos orgânicos de aterros para compostagem/vermicompostagem.
-""")
+# =============================================================================
+# ABA 1: ANÁLISE POR LOTE ÚNICO (100 kg)
+# =============================================================================
+with tab1:
+    st.header("📦 Análise por Lote Único de 100 kg")
+    st.markdown("""
+    **Análise Comparativa: Aterro vs Vermicompostagem vs Compostagem**
 
-# Seleção de cidades
-cidades_selecionadas = st.multiselect(
-    "Selecione as cidades para análise:",
-    options=list(CIDADES_BRASIL.keys()),
-    default=["São Paulo - SP", "Rio de Janeiro - RJ", "Brasília - DF"]
-)
+    Este simulador calcula o potencial de geração de metano de um lote de 100 kg de resíduos orgânicos
+    em três diferentes cenários de gestão, com análise financeira baseada no mercado de carbono.
+    
+    **✅ CORREÇÃO APLICADA:** Kernel de decaimento NÃO normalizado para aterro (metodologia IPCC correta)
+    """)
+    
+    # Parâmetros de entrada na sidebar (apenas para aba 1)
+    with st.sidebar:
+        st.header("⚙️ Parâmetros de Entrada - Lote Único")
+        
+        # Entrada principal de resíduos (fixo em 100 kg para o lote)
+        st.subheader("📦 Lote de Resíduos")
+        residuos_kg = st.number_input(
+            "Peso do lote (kg)", 
+            min_value=10, 
+            max_value=1000, 
+            value=100, 
+            step=10,
+            help="Peso do lote de resíduos orgânicos para análise",
+            key="lote_residuos"
+        )
+        
+        st.subheader("📊 Parâmetros Ambientais")
+        
+        umidade_valor = st.slider(
+            "Umidade do resíduo (%)", 
+            50, 95, 85, 1,
+            help="Percentual de umidade dos resíduos orgânicos",
+            key="umidade_lote"
+        )
+        umidade = umidade_valor / 100.0
+        
+        temperatura = st.slider(
+            "Temperatura média (°C)", 
+            15, 35, 25, 1,
+            help="Temperatura média ambiente (importante para cálculo do DOCf)",
+            key="temp_lote"
+        )
+        
+        st.subheader("⏰ Período de Análise")
+        dias_simulacao = st.slider(
+            "Dias de simulação", 
+            50, 3650, 365, 50,
+            help="Período total da simulação em dias (até 10 anos)",
+            key="dias_lote"
+        )
+        
+        # Adicionar aviso sobre método correto
+        with st.expander("ℹ️ Informação sobre Metodologia"):
+            st.info("""
+            **Método Corrigido (IPCC 2006):**
+            - **Aterro:** Kernel NÃO normalizado - respeita a equação diferencial do decaimento
+            - **Compostagem/Vermicompostagem:** Kernel normalizado - processos curtos (<50 dias)
+            
+            **Para 100 kg × 365 dias:**
+            - Potencial total CH₄: ~5.83 kg
+            - Fração emitida em 365 dias: ~6%
+            - CH₄ emitido no período: ~0.35 kg
+            """)
+        
+        if st.button("🚀 Calcular Potencial de Metano", type="primary", key="btn_lote"):
+            st.session_state.run_analise_lote = True
 
-# Parâmetros de simulação
-col1, col2 = st.columns(2)
-
-with col1:
-    dias_simulacao = st.slider(
-        "Período de análise (dias):",
-        min_value=30,
-        max_value=1095,  # 3 anos
-        value=365,
-        step=30,
-        help="Período para cálculo do potencial de metano"
-    )
-
-with col2:
-    umidade_padrao = st.slider(
-        "Umidade dos resíduos (%):",
-        min_value=50,
-        max_value=95,
-        value=85,
-        step=1
-    )
-
-# Botão para calcular
-if st.button("📊 Calcular Potencial das Cidades", type="primary", use_container_width=True):
-    if not cidades_selecionadas:
-        st.warning("⚠️ Selecione pelo menos uma cidade para análise.")
-    else:
-        with st.spinner("Calculando potencial para as cidades selecionadas..."):
-            # Lista para armazenar resultados
-            resultados_cidades = []
+    # Execução da simulação para aba 1
+    if st.session_state.get('run_analise_lote', False):
+        with st.spinner('Calculando potencial de metano para os três cenários...'):
             
-            # Calcular para cada cidade selecionada
-            for cidade in cidades_selecionadas:
-                resultado = calcular_potencial_cidade(
-                    cidade, 
-                    CIDADES_BRASIL[cidade], 
-                    cotacoes['preco_carbono_eur'],
-                    cotacoes['taxa_cambio'],
-                    dias_simulacao
-                )
-                resultados_cidades.append(resultado)
+            # 1. CÁLCULO DO POTENCIAL DE METANO PARA CADA CENÁRIO
+            # Aterro Sanitário (CORRIGIDO)
+            emissoes_aterro, total_aterro, DOCf, fracao_emitida = calcular_potencial_metano_aterro(
+                residuos_kg, umidade, temperatura, dias_simulacao
+            )
             
-            # Criar DataFrame com resultados
-            df_resultados = pd.DataFrame(resultados_cidades)
+            # Vermicompostagem (50 dias de processo)
+            dias_vermi = min(50, dias_simulacao)
+            emissoes_vermi_temp, total_vermi = calcular_emissoes_vermicompostagem_lote(
+                residuos_kg, umidade, dias_vermi
+            )
+            emissoes_vermi = np.zeros(dias_simulacao)
+            emissoes_vermi[:dias_vermi] = emissoes_vermi_temp
             
-            # =============================================================================
-            # EXIBIR RESULTADOS
-            # =============================================================================
+            # Compostagem Termofílica (50 dias de processo)
+            dias_compost = min(50, dias_simulacao)
+            emissoes_compost_temp, total_compost = calcular_emissoes_compostagem_lote(
+                residuos_kg, umidade, dias_compost
+            )
+            emissoes_compost = np.zeros(dias_simulacao)
+            emissoes_compost[:dias_compost] = emissoes_compost_temp
             
-            st.success(f"✅ Análise concluída para {len(resultados_cidades)} cidades!")
+            # 2. CRIAR DATAFRAME COM OS RESULTADOS
+            datas = pd.date_range(start=datetime.now(), periods=dias_simulacao, freq='D')
             
-            # Métricas agregadas
-            total_populacao = df_resultados['populacao'].sum()
-            total_residuos_ano = df_resultados['residuos_organicos_ano_ton'].sum()
-            total_potencial_vermi = df_resultados['reducao_vermi_tco2eq'].sum()
-            total_valor_vermi_brl = df_resultados['valor_vermi_brl'].sum()
+            df = pd.DataFrame({
+                'Data': datas,
+                'Aterro_CH4_kg': emissoes_aterro,
+                'Vermicompostagem_CH4_kg': emissoes_vermi,
+                'Compostagem_CH4_kg': emissoes_compost
+            })
             
-            col1, col2, col3, col4 = st.columns(4)
+            # Calcular valores acumulados
+            df['Aterro_Acumulado'] = df['Aterro_CH4_kg'].cumsum()
+            df['Vermi_Acumulado'] = df['Vermicompostagem_CH4_kg'].cumsum()
+            df['Compost_Acumulado'] = df['Compostagem_CH4_kg'].cumsum()
+            
+            # Calcular reduções (evitadas) em relação ao aterro
+            df['Reducao_Vermi'] = df['Aterro_Acumulado'] - df['Vermi_Acumulado']
+            df['Reducao_Compost'] = df['Aterro_Acumulado'] - df['Compost_Acumulado']
+            
+            # 3. EXIBIR RESULTADOS PRINCIPAIS
+            st.header("📊 Resultados - Potencial de Metano por Cenário")
+            
+            # Informação sobre metodologia
+            st.info(f"""
+            **📈 Método Corrigido (Kernel NÃO normalizado):**
+            - Potencial total de CH₄ no aterro: **{formatar_br(total_aterro)} kg**
+            - Fração emitida em {dias_simulacao} dias: **{formatar_br(fracao_emitida*100)}%**
+            - CH₄ realmente emitido no período: **{formatar_br(df['Aterro_Acumulado'].iloc[-1])} kg**
+            """)
+            
+            # Métricas principais
+            col1, col2, col3 = st.columns(3)
             
             with col1:
                 st.metric(
-                    "População Total",
-                    f"{formatar_br(total_populacao/1e6)} mi",
-                    help="População das cidades selecionadas"
+                    "Aterro Sanitário",
+                    f"{formatar_br(df['Aterro_Acumulado'].iloc[-1])} kg CH₄",
+                    f"Potencial: {formatar_br(total_aterro)} kg",
+                    help=f"Emitido em {dias_simulacao} dias ({formatar_br(fracao_emitida*100)}% do potencial)"
                 )
             
             with col2:
+                reducao_vermi_kg = df['Aterro_Acumulado'].iloc[-1] - df['Vermi_Acumulado'].iloc[-1]
+                reducao_vermi_perc = (1 - df['Vermi_Acumulado'].iloc[-1]/df['Aterro_Acumulado'].iloc[-1])*100 if df['Aterro_Acumulado'].iloc[-1] > 0 else 0
                 st.metric(
-                    "Resíduos Orgânicos/Ano",
-                    f"{formatar_br(total_residuos_ano)} t",
-                    help="Toneladas de resíduos orgânicos por ano"
+                    "Vermicompostagem",
+                    f"{formatar_br(df['Vermi_Acumulado'].iloc[-1])} kg CH₄",
+                    delta=f"-{formatar_br(reducao_vermi_perc)}%",
+                    delta_color="inverse",
+                    help=f"Redução de {formatar_br(reducao_vermi_kg)} kg vs aterro"
                 )
             
             with col3:
+                reducao_compost_kg = df['Aterro_Acumulado'].iloc[-1] - df['Compost_Acumulado'].iloc[-1]
+                reducao_compost_perc = (1 - df['Compost_Acumulado'].iloc[-1]/df['Aterro_Acumulado'].iloc[-1])*100 if df['Aterro_Acumulado'].iloc[-1] > 0 else 0
                 st.metric(
-                    "Potencial de Créditos",
-                    f"{formatar_br(total_potencial_vermi)} tCO₂eq",
-                    help="Créditos de carbono anuais"
+                    "Compostagem Termofílica",
+                    f"{formatar_br(df['Compost_Acumulado'].iloc[-1])} kg CH₄",
+                    delta=f"-{formatar_br(reducao_compost_perc)}%",
+                    delta_color="inverse",
+                    help=f"Redução de {formatar_br(reducao_compost_kg)} kg vs aterro"
                 )
             
-            with col4:
-                st.metric(
-                    "Valor Financeiro (R$)",
-                    f"R$ {formatar_br(total_valor_vermi_brl)}",
-                    help=f"Valor anual @ €{formatar_br(cotacoes['preco_carbono_eur'])}/tCO₂eq"
-                )
+            # 4. GRÁFICO: REDUÇÃO DE EMISSÕES ACUMULADA
+            st.subheader("📉 Redução de Emissões Acumulada (CH₄)")
             
-            # =============================================================================
-            # TABELA DETALHADA
-            # =============================================================================
+            fig, ax = plt.subplots(figsize=(12, 6))
             
-            st.subheader("📋 Tabela Detalhada por Cidade")
+            # Configurar formatação
+            br_formatter = FuncFormatter(br_format)
             
-            # Preparar DataFrame para exibição
-            df_exibir = df_resultados.copy()
-            df_exibir = df_exibir[[
-                'cidade', 'regiao', 'populacao', 'residuos_organicos_ano_ton',
-                'reducao_vermi_tco2eq', 'valor_vermi_brl', 'valor_por_ton_residuo_brl'
-            ]]
+            # Plotar linhas de acumulado
+            ax.plot(df['Data'], df['Aterro_Acumulado'], 'r-', 
+                    label='Aterro Sanitário', linewidth=3, alpha=0.7)
+            ax.plot(df['Data'], df['Vermi_Acumulado'], 'g-', 
+                    label='Vermicompostagem', linewidth=2)
+            ax.plot(df['Data'], df['Compost_Acumulado'], 'b-', 
+                    label='Compostagem Termofílica', linewidth=2)
             
-            # Renomear colunas
-            df_exibir.columns = [
-                'Cidade', 'Região', 'População', 'Resíduos Orgânicos/Ano (t)',
-                'Créditos Potenciais (tCO₂eq)', 'Valor Anual (R$)', 'Valor por t Resíduo (R$)'
-            ]
+            # Área de redução (evitadas)
+            ax.fill_between(df['Data'], df['Vermi_Acumulado'], df['Aterro_Acumulado'],
+                            color='green', alpha=0.3, label='Redução Vermicompostagem')
+            ax.fill_between(df['Data'], df['Compost_Acumulado'], df['Aterro_Acumulado'],
+                            color='blue', alpha=0.2, label='Redução Compostagem')
             
-            # Formatar números
-            for col in ['População', 'Resíduos Orgânicos/Ano (t)', 'Créditos Potenciais (tCO₂eq)',
-                       'Valor Anual (R$)', 'Valor por t Resíduo (R$)']:
-                if col == 'População':
-                    df_exibir[col] = df_exibir[col].apply(lambda x: formatar_br(x/1000) + ' mil')
-                else:
-                    df_exibir[col] = df_exibir[col].apply(lambda x: formatar_br(x))
+            # Configurar gráfico
+            ax.set_title(f'Acumulado de Metano em {dias_simulacao} Dias - Lote de {residuos_kg} kg (Método Corrigido)', 
+                        fontsize=14, fontweight='bold')
+            ax.set_xlabel('Data')
+            ax.set_ylabel('Metano Acumulado (kg CH₄)')
+            ax.legend(title='Cenário de Gestão', loc='upper left')
+            ax.grid(True, linestyle='--', alpha=0.5)
+            ax.yaxis.set_major_formatter(br_formatter)
             
-            # Exibir tabela
-            st.dataframe(df_exibir, use_container_width=True, height=400)
+            # Rotacionar labels do eixo x
+            plt.xticks(rotation=45)
+            plt.tight_layout()
             
-            # =============================================================================
-            # GRÁFICOS COMPARATIVOS
-            # =============================================================================
+            st.pyplot(fig)
             
-            st.subheader("📊 Visualizações Comparativas")
+            # 5. CÁLCULO DE CO₂eq E VALOR FINANCEIRO
+            st.header("💰 Valor Financeiro das Emissões Evitadas")
             
-            tab1, tab2, tab3 = st.tabs(["Valor Financeiro", "Potencial de Créditos", "Eficiência por Tonelada"])
+            # Converter metano para CO₂eq (GWP CH₄ = 27.9 para 100 anos - IPCC AR6)
+            GWP_CH4 = 27.9  # kg CO₂eq per kg CH₄
             
-            with tab1:
-                fig, ax = plt.subplots(figsize=(12, 6))
-                bars = ax.bar(df_resultados['cidade'], df_resultados['valor_vermi_brl'] / 1e6, color='green')
-                ax.set_title('Valor Financeiro Anual de Créditos de Carbono (Milhões de R$)', fontsize=14, fontweight='bold')
-                ax.set_xlabel('Cidade')
-                ax.set_ylabel('Valor (Milhões de R$)')
-                ax.tick_params(axis='x', rotation=45)
-                
-                # Adicionar valores nas barras
-                for bar in bars:
-                    height = bar.get_height()
-                    ax.text(bar.get_x() + bar.get_width()/2., height + 0.5,
-                            f'R$ {formatar_br(height)}M',
-                            ha='center', va='bottom', fontsize=9)
-                
-                plt.tight_layout()
-                st.pyplot(fig)
+            total_evitado_vermi_kg = (df['Aterro_Acumulado'].iloc[-1] - df['Vermi_Acumulado'].iloc[-1]) * GWP_CH4
+            total_evitado_vermi_tco2eq = total_evitado_vermi_kg / 1000
             
-            with tab2:
-                fig, ax = plt.subplots(figsize=(12, 6))
-                bars = ax.bar(df_resultados['cidade'], df_resultados['reducao_vermi_tco2eq'], color='blue')
-                ax.set_title('Potencial de Créditos de Carbono (tCO₂eq/ano)', fontsize=14, fontweight='bold')
-                ax.set_xlabel('Cidade')
-                ax.set_ylabel('tCO₂eq/ano')
-                ax.tick_params(axis='x', rotation=45)
-                
-                for bar in bars:
-                    height = bar.get_height()
-                    ax.text(bar.get_x() + bar.get_width()/2., height + 50,
-                            formatar_br(height),
-                            ha='center', va='bottom', fontsize=9)
-                
-                plt.tight_layout()
-                st.pyplot(fig)
+            total_evitado_compost_kg = (df['Aterro_Acumulado'].iloc[-1] - df['Compost_Acumulado'].iloc[-1]) * GWP_CH4
+            total_evitado_compost_tco2eq = total_evitado_compost_kg / 1000
             
-            with tab3:
-                fig, ax = plt.subplots(figsize=(12, 6))
-                bars = ax.bar(df_resultados['cidade'], df_resultados['valor_por_ton_residuo_brl'], color='orange')
-                ax.set_title('Valor Gerado por Tonelada de Resíduo Orgânico (R$/t)', fontsize=14, fontweight='bold')
-                ax.set_xlabel('Cidade')
-                ax.set_ylabel('R$ por tonelada')
-                ax.tick_params(axis='x', rotation=45)
-                
-                for bar in bars:
-                    height = bar.get_height()
-                    ax.text(bar.get_x() + bar.get_width()/2., height + 1,
-                            f'R$ {formatar_br(height)}',
-                            ha='center', va='bottom', fontsize=9)
-                
-                plt.tight_layout()
-                st.pyplot(fig)
+            # Calcular valor em Reais
+            preco_carbono_reais = cotacoes['preco_carbono_reais']
             
-            # =============================================================================
-            # ANÁLISE POR REGIÃO
-            # =============================================================================
+            valor_vermi_brl = total_evitado_vermi_tco2eq * preco_carbono_reais
+            valor_compost_brl = total_evitado_compost_tco2eq * preco_carbono_reais
             
-            st.subheader("🌍 Análise Agregada por Região")
-            
-            # Agrupar por região
-            df_regiao = df_resultados.groupby('regiao').agg({
-                'populacao': 'sum',
-                'residuos_organicos_ano_ton': 'sum',
-                'reducao_vermi_tco2eq': 'sum',
-                'valor_vermi_brl': 'sum'
-            }).reset_index()
-            
-            # Calcular métricas por região
-            df_regiao['valor_por_hab'] = df_regiao['valor_vermi_brl'] / df_regiao['populacao']
-            df_regiao['creditos_por_hab'] = df_regiao['reducao_vermi_tco2eq'] / df_regiao['populacao']
-            
+            # Exibir métricas
             col1, col2 = st.columns(2)
             
             with col1:
-                fig, ax = plt.subplots(figsize=(10, 6))
-                ax.pie(df_regiao['valor_vermi_brl'], labels=df_regiao['regiao'], autopct='%1.1f%%',
-                      colors=['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57'])
-                ax.set_title('Distribuição do Valor por Região', fontsize=14, fontweight='bold')
-                st.pyplot(fig)
+                st.metric(
+                    "Vermicompostagem",
+                    f"{formatar_br(total_evitado_vermi_tco2eq)} tCO₂eq",
+                    f"R$ {formatar_br(valor_vermi_brl)}",
+                    delta_color="off"
+                )
             
             with col2:
-                fig, ax = plt.subplots(figsize=(10, 6))
-                x = np.arange(len(df_regiao))
-                width = 0.35
-                
-                ax.bar(x - width/2, df_regiao['valor_por_hab'], width, label='R$/hab', color='green')
-                ax.bar(x + width/2, df_regiao['creditos_por_hab'], width, label='tCO₂eq/hab', color='blue')
-                
-                ax.set_xlabel('Região')
-                ax.set_title('Métricas por Habitante', fontsize=14, fontweight='bold')
-                ax.set_xticks(x)
-                ax.set_xticklabels(df_regiao['regiao'])
-                ax.legend()
-                ax.grid(axis='y', alpha=0.3)
-                
-                plt.tight_layout()
-                st.pyplot(fig)
+                st.metric(
+                    "Compostagem",
+                    f"{formatar_br(total_evitado_compost_tco2eq)} tCO₂eq",
+                    f"R$ {formatar_br(valor_compost_brl)}",
+                    delta_color="off"
+                )
             
-            # =============================================================================
-            # DOWNLOAD DOS RESULTADOS
-            # =============================================================================
+            # Resumo final
+            st.success(f"""
+            **🎯 RESUMO FINAL PARA LOTE DE {residuos_kg} kg:**
             
-            st.subheader("💾 Download dos Resultados")
+            **Aterro:** Emite **{formatar_br(df['Aterro_Acumulado'].iloc[-1])} kg CH₄** em **{dias_simulacao} dias** ({formatar_br(fracao_emitida*100)}% do potencial total)
             
-            # Preparar DataFrame para download
-            df_download = df_resultados.copy()
+            **Vermicompostagem:** Emite **{formatar_br(df['Vermi_Acumulado'].iloc[-1])} kg CH₄** em **apenas 50 dias** ({formatar_br((1 - df['Vermi_Acumulado'].iloc[-1]/df['Aterro_Acumulado'].iloc[-1])*100)}% de redução)
             
-            # Converter para Excel
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_download.to_excel(writer, sheet_name='Resultados_Cidades', index=False)
-                df_regiao.to_excel(writer, sheet_name='Agregado_Região', index=False)
+            **Compostagem:** Emite **{formatar_br(df['Compost_Acumulado'].iloc[-1])} kg CH₄** em **apenas 50 dias** ({formatar_br((1 - df['Compost_Acumulado'].iloc[-1]/df['Aterro_Acumulado'].iloc[-1])*100)}% de redução)
             
-            output.seek(0)
-            
-            st.download_button(
-                label="📥 Baixar Resultados Completos (Excel)",
-                data=output,
-                file_name=f"potencial_creditos_carbono_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-            
-            # =============================================================================
-            # RESUMO EXECUTIVO
-            # =============================================================================
-            
-            with st.expander("📋 RESUMO EXECUTIVO - POTENCIAL DE MERCADO", expanded=True):
-                st.markdown(f"""
-                ### 🌟 **RESUMO DO POTENCIAL DE CRÉDITOS DE CARBONO**
-                
-                **📊 METRÍCAS CONSIDERANDO {len(resultados_cidades)} CIDADES SELECIONADAS:**
-                
-                | Indicador | Valor Total |
-                |-----------|-------------|
-                | **População atendida** | {formatar_br(total_populacao/1e6)} milhões de habitantes |
-                | **Resíduos orgânicos/ano** | {formatar_br(total_residuos_ano)} toneladas |
-                | **Créditos de carbono potenciais** | {formatar_br(total_potencial_vermi)} tCO₂eq/ano |
-                | **Valor financeiro anual** | **R$ {formatar_br(total_valor_vermi_brl)}** |
-                
-                **💰 VALORIZAÇÃO POR TONELADA DE RESÍDUO:**
-                - **Média:** R$ {formatar_br(df_resultados['valor_por_ton_residuo_brl'].mean())} por tonelada
-                - **Mínimo:** R$ {formatar_br(df_resultados['valor_por_ton_residuo_brl'].min())}
-                - **Máximo:** R$ {formatar_br(df_resultados['valor_por_ton_residuo_brl'].max())}
-                
-                **🏆 CIDADES COM MAIOR POTENCIAL:**
-                """)
-                
-                # Top 3 cidades por valor
-                top3 = df_resultados.nlargest(3, 'valor_vermi_brl')
-                for idx, row in top3.iterrows():
-                    st.markdown(f"- **{row['cidade']}:** R$ {formatar_br(row['valor_vermi_brl'])}/ano")
-                
-                st.markdown(f"""
-                **🌍 DISTRIBUIÇÃO REGIONAL:**
-                """)
-                
-                for idx, row in df_regiao.iterrows():
-                    st.markdown(f"- **{row['regiao']}:** R$ {formatar_br(row['valor_vermi_brl'])} ({formatar_br(row['valor_por_hab'])} por habitante)")
-                
-                st.markdown(f"""
-                **📈 CONSIDERAÇÕES DE MERCADO:**
-                - **Preço atual do carbono:** € {formatar_br(cotacoes['preco_carbono_eur'])}/tCO₂eq (R$ {formatar_br(cotacoes['preco_carbono_reais'])})
-                - **Taxa de câmbio:** 1 EUR = R$ {formatar_br(cotacoes['taxa_cambio'])}
-                - **Metodologia:** IPCC 2006 + Yang et al. (2017) - Vermicompostagem
-                - **Período de análise:** {dias_simulacao} dias
-                - **GWP CH₄:** 27.9 kg CO₂eq/kg CH₄
-                
-                **💡 RECOMENDAÇÕES:**
-                1. **Priorizar cidades com maior geração de resíduos orgânicos**
-                2. **Implementar programas municipais de compostagem**
-                3. **Capturar créditos de carbono através do Mecanismo de Desenvolvimento Limpo**
-                4. **Considerar parcerias público-privadas para investimento em infraestrutura**
-                
-                **⚠️ LIMITAÇÕES:**
-                - Valores baseados em dados médios e parâmetros padrão
-                - Não considera custos de implantação e operação
-                - Preço do carbono sujeito a variações de mercado
-                - Depende da implementação efetiva dos sistemas de compostagem
-                """)
+            **💰 VALOR FINANCEIRO:** Potencial de **R$ {formatar_br(valor_vermi_brl)}** em créditos de carbono
+            """)
+    else:
+        st.info("💡 Ajuste os parâmetros na barra lateral e clique em 'Calcular Potencial de Metano' para ver os resultados.")
 
-else:
-    st.info("💡 Selecione as cidades e clique em 'Calcular Potencial das Cidades' para ver os resultados.")
+# =============================================================================
+# ABA 2: ENTRADA CONTÍNUA (kg/dia) - SEÇÃO ORIGINAL SIMPLIFICADA
+# =============================================================================
+with tab2:
+    # Título da aba 2
+    st.header("📈 Análise para Entrada Contínua (kg/dia)")
+    st.markdown("""
+    **Simulação Completa: Comparação de Emissões em Longo Prazo**
+    
+    Esta ferramenta projeta os Créditos de Carbono ao calcular as emissões de gases de efeito estufa para dois contextos de gestão de resíduos
+    """)
+    
+    # Seção original de parâmetros
+    with st.sidebar:
+        st.header("⚙️ Parâmetros de Entrada - Entrada Contínua")
+        
+        # Entrada principal de resíduos
+        residuos_kg_dia = st.slider("Quantidade de resíduos (kg/dia)", 
+                                   min_value=10, max_value=1000, value=100, step=10,
+                                   help="Quantidade diária de resíduos orgânicos gerados",
+                                   key="residuos_cont")
+        
+        st.subheader("📊 Parâmetros Operacionais")
+        
+        # Umidade com formatação brasileira
+        umidade_valor = st.slider("Umidade do resíduo (%)", 50, 95, 85, 1,
+                                 help="Percentual de umidade dos resíduos orgânicos",
+                                 key="umidade_cont")
+        umidade = umidade_valor / 100.0
+        
+        # Variáveis operacionais
+        massa_exposta_kg = st.slider("Massa exposta na frente de trabalho (kg)", 50, 200, 100, 10,
+                                    help="Massa de resíduos exposta diariamente para tratamento",
+                                    key="massa_cont")
+        h_exposta = st.slider("Horas expostas por dia", 4, 24, 8, 1,
+                             help="Horas diárias de exposição dos resíduos",
+                             key="horas_cont")
+        
+        st.subheader("🎯 Configuração de Simulação")
+        anos_simulacao = st.slider("Anos de simulação", 1, 50, 20, 1,
+                                  help="Período total da simulação em anos",
+                                  key="anos_cont")
+        
+        if st.button("🚀 Executar Simulação", type="primary", key="btn_cont"):
+            st.session_state.run_simulation = True
+
+    # Executar simulação quando solicitado
+    if st.session_state.get('run_simulation', False):
+        with st.spinner('Executando simulação...'):
+            # Calcular dias e datas
+            dias = anos_simulacao * 365
+            data_inicio = datetime.now()
+            datas = pd.date_range(start=data_inicio, periods=dias, freq='D')
+            
+            # Executar modelo base
+            params_base = [umidade, T, DOC]
+
+            ch4_aterro_dia, n2o_aterro_dia = calcular_emissoes_aterro(params_base, dias, residuos_kg_dia, massa_exposta_kg, h_exposta)
+            ch4_vermi_dia, n2o_vermi_dia = calcular_emissoes_vermi(params_base, dias, residuos_kg_dia)
+            
+            # Construir DataFrame
+            df = pd.DataFrame({
+                'Data': datas,
+                'CH4_Aterro_kg_dia': ch4_aterro_dia,
+                'N2O_Aterro_kg_dia': n2o_aterro_dia,
+                'CH4_Vermi_kg_dia': ch4_vermi_dia,
+                'N2O_Vermi_kg_dia': n2o_vermi_dia,
+            })
+
+            for gas in ['CH4_Aterro', 'N2O_Aterro', 'CH4_Vermi', 'N2O_Vermi']:
+                df[f'{gas}_tCO2eq'] = df[f'{gas}_kg_dia'] * (GWP_CH4_20 if 'CH4' in gas else GWP_N2O_20) / 1000
+
+            df['Total_Aterro_tCO2eq_dia'] = df['CH4_Aterro_tCO2eq'] + df['N2O_Aterro_tCO2eq']
+            df['Total_Vermi_tCO2eq_dia'] = df['CH4_Vermi_tCO2eq'] + df['N2O_Vermi_tCO2eq']
+
+            df['Total_Aterro_tCO2eq_acum'] = df['Total_Aterro_tCO2eq_dia'].cumsum()
+            df['Total_Vermi_tCO2eq_acum'] = df['Total_Vermi_tCO2eq_dia'].cumsum()
+            df['Reducao_tCO2eq_acum'] = df['Total_Aterro_tCO2eq_acum'] - df['Total_Vermi_tCO2eq_acum']
+
+            # Resumo anual
+            df['Year'] = df['Data'].dt.year
+            df_anual = df.groupby('Year').agg({
+                'Total_Aterro_tCO2eq_dia': 'sum',
+                'Total_Vermi_tCO2eq_dia': 'sum',
+            }).reset_index()
+
+            df_anual['Emission reductions (t CO₂eq)'] = df_anual['Total_Aterro_tCO2eq_dia'] - df_anual['Total_Vermi_tCO2eq_dia']
+            df_anual['Cumulative reduction (t CO₂eq)'] = df_anual['Emission reductions (t CO₂eq)'].cumsum()
+
+            # =============================================================================
+            # EXIBIÇÃO DOS RESULTADOS
+            # =============================================================================
+
+            # Obter valores totais
+            total_evitado = df['Reducao_tCO2eq_acum'].iloc[-1]
+            
+            # Calcular valor financeiro
+            valor_eur = total_evitado * cotacoes['preco_carbono_eur']
+            valor_brl = valor_eur * cotacoes['taxa_cambio']
+            
+            # Exibir métricas financeiras
+            st.subheader("💰 Valor Financeiro das Emissões Evitadas")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    "Emissões Evitadas",
+                    f"{formatar_br(total_evitado)} tCO₂eq",
+                    help="Total em toda a simulação"
+                )
+            with col2:
+                st.metric(
+                    "Valor em Euros",
+                    f"€ {formatar_br(valor_eur)}",
+                    help=f"@ €{formatar_br(cotacoes['preco_carbono_eur'])}/tCO₂eq"
+                )
+            with col3:
+                st.metric(
+                    "Valor em Reais",
+                    f"R$ {formatar_br(valor_brl)}",
+                    help=f"@ R${formatar_br(cotacoes['preco_carbono_reais'])}/tCO₂eq"
+                )
+            
+            # Gráfico de redução acumulada
+            st.subheader("📉 Redução de Emissões Acumulada")
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.plot(df['Data'], df['Total_Aterro_tCO2eq_acum'], 'r-', label='Cenário Base (Aterro)', linewidth=2)
+            ax.plot(df['Data'], df['Total_Vermi_tCO2eq_acum'], 'g-', label='Projeto (Vermicompostagem)', linewidth=2)
+            ax.fill_between(df['Data'], df['Total_Vermi_tCO2eq_acum'], df['Total_Aterro_tCO2eq_acum'],
+                            color='skyblue', alpha=0.5, label='Emissões Evitadas')
+            ax.set_title(f'Redução de Emissões em {anos_simulacao} Anos')
+            ax.set_xlabel('Ano')
+            ax.set_ylabel('tCO₂eq Acumulado')
+            ax.legend()
+            ax.grid(True, linestyle='--', alpha=0.7)
+            ax.yaxis.set_major_formatter(FuncFormatter(br_format))
+
+            st.pyplot(fig)
+            
+            # Tabela de resultados anuais
+            st.subheader("📋 Resultados Anuais")
+            
+            # Formatar DataFrame para exibição
+            df_anual_display = df_anual.copy()
+            df_anual_display.columns = ['Ano', 'Emissões Aterro (tCO₂eq)', 'Emissões Vermicompostagem (tCO₂eq)', 
+                                       'Redução (tCO₂eq)', 'Redução Acumulada (tCO₂eq)']
+            
+            for col in df_anual_display.columns[1:]:
+                df_anual_display[col] = df_anual_display[col].apply(lambda x: formatar_br(x))
+            
+            st.dataframe(df_anual_display, use_container_width=True)
+            
+            # Resumo final
+            st.success(f"""
+            **📊 RESUMO DA SIMULAÇÃO:**
+            
+            **Período:** {anos_simulacao} anos ({dias} dias)
+            **Resíduos processados:** {formatar_br(residuos_kg_dia)} kg/dia ({formatar_br(residuos_kg_dia * 365 / 1000)} toneladas/ano)
+            **Emissões evitadas:** {formatar_br(total_evitado)} tCO₂eq
+            **Valor financeiro:** R$ {formatar_br(valor_brl)}
+            
+            **💰 POTENCIAL ANUAL:** R$ {formatar_br(valor_brl/anos_simulacao)}/ano
+            """)
+    else:
+        st.info("💡 Ajuste os parâmetros na barra lateral e clique em 'Executar Simulação' para ver os resultados.")
+
+# =============================================================================
+# ABA 3: POTENCIAL POR CIDADE
+# =============================================================================
+with tab3:
+    st.header("🏙️ Análise de Potencial por Cidade")
+    
+    st.markdown("""
+    **Calcule o potencial de créditos de carbono para cidades brasileiras através do desvio de resíduos orgânicos**
+    
+    Esta ferramenta estima o valor financeiro que cada cidade poderia gerar ao desviar seus resíduos orgânicos
+    de aterros sanitários para sistemas de compostagem ou vermicompostagem.
+    """)
+    
+    # Container para seleção de cidades
+    with st.container():
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            # Seleção de cidades
+            cidades_selecionadas = st.multiselect(
+                "Selecione as cidades para análise:",
+                options=list(CIDADES_BRASIL.keys()),
+                default=["São Paulo - SP", "Rio de Janeiro - RJ", "Brasília - DF"],
+                help="Selecione uma ou mais cidades para calcular o potencial"
+            )
+        
+        with col2:
+            # Período de análise
+            dias_simulacao = st.slider(
+                "Período (dias):",
+                min_value=30,
+                max_value=1095,
+                value=365,
+                step=30,
+                help="Período para cálculo do potencial"
+            )
+    
+    # Botão para calcular
+    if st.button("📊 Calcular Potencial das Cidades", type="primary", use_container_width=True, key="btn_cidades"):
+        if not cidades_selecionadas:
+            st.warning("⚠️ Selecione pelo menos uma cidade para análise.")
+        else:
+            with st.spinner("Calculando potencial para as cidades selecionadas..."):
+                # Lista para armazenar resultados
+                resultados_cidades = []
+                
+                # Calcular para cada cidade selecionada
+                for cidade in cidades_selecionadas:
+                    resultado = calcular_potencial_cidade(
+                        cidade, 
+                        CIDADES_BRASIL[cidade], 
+                        cotacoes['preco_carbono_eur'],
+                        cotacoes['taxa_cambio'],
+                        dias_simulacao
+                    )
+                    resultados_cidades.append(resultado)
+                
+                # Criar DataFrame com resultados
+                df_resultados = pd.DataFrame(resultados_cidades)
+                
+                # =============================================================================
+                # EXIBIR RESULTADOS
+                # =============================================================================
+                
+                st.success(f"✅ Análise concluída para {len(resultados_cidades)} cidades!")
+                
+                # Métricas agregadas
+                total_populacao = df_resultados['populacao'].sum()
+                total_residuos_ano = df_resultados['residuos_organicos_ano_ton'].sum()
+                total_potencial = df_resultados['reducao_vermi_tco2eq'].sum()
+                total_valor_brl = df_resultados['valor_vermi_brl'].sum()
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric(
+                        "População Total",
+                        f"{formatar_br(total_populacao/1e6)} mi",
+                        help="População das cidades selecionadas"
+                    )
+                
+                with col2:
+                    st.metric(
+                        "Resíduos Orgânicos/Ano",
+                        f"{formatar_br(total_residuos_ano)} t",
+                        help="Toneladas de resíduos orgânicos por ano"
+                    )
+                
+                with col3:
+                    st.metric(
+                        "Potencial de Créditos",
+                        f"{formatar_br(total_potencial)} tCO₂eq",
+                        help="Créditos de carbono anuais"
+                    )
+                
+                with col4:
+                    st.metric(
+                        "Valor Financeiro (R$)",
+                        f"R$ {formatar_br(total_valor_brl)}",
+                        help=f"Valor anual @ €{formatar_br(cotacoes['preco_carbono_eur'])}/tCO₂eq"
+                    )
+                
+                # =============================================================================
+                # TABELA DETALHADA
+                # =============================================================================
+                
+                st.subheader("📋 Tabela Detalhada por Cidade")
+                
+                # Preparar DataFrame para exibição
+                df_exibir = df_resultados.copy()
+                df_exibir = df_exibir[[
+                    'cidade', 'regiao', 'populacao', 'residuos_organicos_ano_ton',
+                    'reducao_vermi_tco2eq', 'valor_vermi_brl', 'valor_por_ton_residuo_brl'
+                ]]
+                
+                # Renomear colunas
+                df_exibir.columns = [
+                    'Cidade', 'Região', 'População', 'Resíduos Orgânicos/Ano (t)',
+                    'Créditos Potenciais (tCO₂eq)', 'Valor Anual (R$)', 'Valor por t Resíduo (R$)'
+                ]
+                
+                # Formatar números
+                for col in ['População', 'Resíduos Orgânicos/Ano (t)', 'Créditos Potenciais (tCO₂eq)',
+                           'Valor Anual (R$)', 'Valor por t Resíduo (R$)']:
+                    if col == 'População':
+                        df_exibir[col] = df_exibir[col].apply(lambda x: formatar_br(x/1000) + ' mil')
+                    else:
+                        df_exibir[col] = df_exibir[col].apply(lambda x: formatar_br(x))
+                
+                # Exibir tabela
+                st.dataframe(df_exibir, use_container_width=True, height=400)
+                
+                # =============================================================================
+                # GRÁFICOS COMPARATIVOS
+                # =============================================================================
+                
+                st.subheader("📊 Visualizações Comparativas")
+                
+                tab_graf1, tab_graf2 = st.tabs(["Valor Financeiro", "Potencial de Créditos"])
+                
+                with tab_graf1:
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                    bars = ax.bar(df_resultados['cidade'], df_resultados['valor_vermi_brl'] / 1e6, color='green')
+                    ax.set_title('Valor Financeiro Anual de Créditos de Carbono (Milhões de R$)', fontsize=14, fontweight='bold')
+                    ax.set_xlabel('Cidade')
+                    ax.set_ylabel('Valor (Milhões de R$)')
+                    ax.tick_params(axis='x', rotation=45)
+                    
+                    # Adicionar valores nas barras
+                    for bar in bars:
+                        height = bar.get_height()
+                        ax.text(bar.get_x() + bar.get_width()/2., height + 0.5,
+                                f'R$ {formatar_br(height)}M',
+                                ha='center', va='bottom', fontsize=9)
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                
+                with tab_graf2:
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                    bars = ax.bar(df_resultados['cidade'], df_resultados['reducao_vermi_tco2eq'], color='blue')
+                    ax.set_title('Potencial de Créditos de Carbono (tCO₂eq/ano)', fontsize=14, fontweight='bold')
+                    ax.set_xlabel('Cidade')
+                    ax.set_ylabel('tCO₂eq/ano')
+                    ax.tick_params(axis='x', rotation=45)
+                    
+                    for bar in bars:
+                        height = bar.get_height()
+                        ax.text(bar.get_x() + bar.get_width()/2., height + 50,
+                                formatar_br(height),
+                                ha='center', va='bottom', fontsize=9)
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                
+                # =============================================================================
+                # ANÁLISE POR REGIÃO
+                # =============================================================================
+                
+                st.subheader("🌍 Análise Agregada por Região")
+                
+                # Agrupar por região
+                df_regiao = df_resultados.groupby('regiao').agg({
+                    'populacao': 'sum',
+                    'residuos_organicos_ano_ton': 'sum',
+                    'reducao_vermi_tco2eq': 'sum',
+                    'valor_vermi_brl': 'sum'
+                }).reset_index()
+                
+                # Calcular métricas por região
+                df_regiao['valor_por_hab'] = df_regiao['valor_vermi_brl'] / df_regiao['populacao']
+                df_regiao['creditos_por_hab'] = df_regiao['reducao_vermi_tco2eq'] / df_regiao['populacao']
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    ax.pie(df_regiao['valor_vermi_brl'], labels=df_regiao['regiao'], autopct='%1.1f%%',
+                          colors=['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57'])
+                    ax.set_title('Distribuição do Valor por Região', fontsize=14, fontweight='bold')
+                    st.pyplot(fig)
+                
+                with col2:
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    x = np.arange(len(df_regiao))
+                    width = 0.35
+                    
+                    ax.bar(x - width/2, df_regiao['valor_por_hab'], width, label='R$/hab', color='green')
+                    ax.bar(x + width/2, df_regiao['creditos_por_hab'], width, label='tCO₂eq/hab', color='blue')
+                    
+                    ax.set_xlabel('Região')
+                    ax.set_title('Métricas por Habitante', fontsize=14, fontweight='bold')
+                    ax.set_xticks(x)
+                    ax.set_xticklabels(df_regiao['regiao'])
+                    ax.legend()
+                    ax.grid(axis='y', alpha=0.3)
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                
+                # =============================================================================
+                # RESUMO EXECUTIVO
+                # =============================================================================
+                
+                with st.expander("📋 RESUMO EXECUTIVO - POTENCIAL DE MERCADO", expanded=True):
+                    st.markdown(f"""
+                    ### 🌟 **RESUMO DO POTENCIAL DE CRÉDITOS DE CARBONO**
+                    
+                    **📊 METRÍCAS CONSIDERANDO {len(resultados_cidades)} CIDADES SELECIONADAS:**
+                    
+                    | Indicador | Valor Total |
+                    |-----------|-------------|
+                    | **População atendida** | {formatar_br(total_populacao/1e6)} milhões de habitantes |
+                    | **Resíduos orgânicos/ano** | {formatar_br(total_residuos_ano)} toneladas |
+                    | **Créditos de carbono potenciais** | {formatar_br(total_potencial)} tCO₂eq/ano |
+                    | **Valor financeiro anual** | **R$ {formatar_br(total_valor_brl)}** |
+                    
+                    **💰 VALORIZAÇÃO POR TONELADA DE RESÍDUO:**
+                    - **Média:** R$ {formatar_br(df_resultados['valor_por_ton_residuo_brl'].mean())} por tonelada
+                    - **Mínimo:** R$ {formatar_br(df_resultados['valor_por_ton_residuo_brl'].min())}
+                    - **Máximo:** R$ {formatar_br(df_resultados['valor_por_ton_residuo_brl'].max())}
+                    
+                    **🏆 CIDADES COM MAIOR POTENCIAL:**
+                    """)
+                    
+                    # Top 3 cidades por valor
+                    top3 = df_resultados.nlargest(3, 'valor_vermi_brl')
+                    for idx, row in top3.iterrows():
+                        st.markdown(f"- **{row['cidade']}:** R$ {formatar_br(row['valor_vermi_brl'])}/ano")
+                    
+                    st.markdown(f"""
+                    **📈 CONSIDERAÇÕES DE MERCADO:**
+                    - **Preço atual do carbono:** € {formatar_br(cotacoes['preco_carbono_eur'])}/tCO₂eq (R$ {formatar_br(cotacoes['preco_carbono_reais'])})
+                    - **Taxa de câmbio:** 1 EUR = R$ {formatar_br(cotacoes['taxa_cambio'])}
+                    - **Metodologia:** IPCC 2006 + Yang et al. (2017) - Vermicompostagem
+                    - **Período de análise:** {dias_simulacao} dias
+                    - **GWP CH₄:** 27.9 kg CO₂eq/kg CH₄
+                    
+                    **💡 RECOMENDAÇÕES:**
+                    1. **Priorizar cidades com maior geração de resíduos orgânicos**
+                    2. **Implementar programas municipais de compostagem**
+                    3. **Capturar créditos de carbono através do Mecanismo de Desenvolvimento Limpo**
+                    4. **Considerar parcerias público-privadas para investimento em infraestrutura**
+                    """)
+                
+                # =============================================================================
+                # DOWNLOAD DOS RESULTADOS
+                # =============================================================================
+                
+                st.subheader("💾 Download dos Resultados")
+                
+                # Preparar DataFrame para download
+                df_download = df_resultados.copy()
+                
+                # Converter para Excel
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df_download.to_excel(writer, sheet_name='Resultados_Cidades', index=False)
+                    df_regiao.to_excel(writer, sheet_name='Agregado_Região', index=False)
+                
+                output.seek(0)
+                
+                st.download_button(
+                    label="📥 Baixar Resultados Completos (Excel)",
+                    data=output,
+                    file_name=f"potencial_creditos_carbono_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+    else:
+        st.info("💡 Selecione as cidades e clique em 'Calcular Potencial das Cidades' para ver os resultados.")
 
 # =============================================================================
 # RODAPÉ
