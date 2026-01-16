@@ -97,7 +97,7 @@ st.markdown("""
         100% { transform: translate(20px, 20px); }
     }
     
-    /* ===== MENU DE NAVEGAÇÃO FIXO ===== */
+    /* ===== MENU DE NAVEGAÇÃO VISÍVEL ===== */
     .nav-container {
         background: var(--card-white);
         border-radius: var(--border-radius);
@@ -105,47 +105,6 @@ st.markdown("""
         margin-bottom: 2rem;
         box-shadow: var(--shadow-sm);
         border: 1px solid rgba(0,0,0,0.05);
-        display: block !important;
-        visibility: visible !important;
-        opacity: 1 !important;
-    }
-    
-    .nav-buttons-container {
-        display: flex;
-        gap: 0.5rem;
-        width: 100%;
-    }
-    
-    .nav-button {
-        flex: 1;
-        padding: 1rem 1.5rem;
-        background: var(--neutral-light);
-        border: 2px solid transparent;
-        border-radius: 8px;
-        color: var(--neutral-gray);
-        font-weight: 600;
-        font-size: 0.95rem;
-        cursor: pointer;
-        transition: var(--transition);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.5rem;
-        text-align: center;
-    }
-    
-    .nav-button:hover {
-        background: rgba(20, 66, 114, 0.1);
-        color: var(--primary-blue);
-        border-color: rgba(20, 66, 114, 0.2);
-        transform: translateY(-2px);
-    }
-    
-    .nav-button.active {
-        background: linear-gradient(135deg, var(--primary-blue) 0%, var(--primary-light) 100%);
-        color: white;
-        border-color: var(--primary-blue);
-        box-shadow: 0 4px 12px rgba(20, 66, 114, 0.2);
     }
     
     /* ===== CARDS MODERNOS ===== */
@@ -748,16 +707,16 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
 # =============================================================================
-# MENU DE NAVEGAÇÃO PRINCIPAL - AGORA VISÍVEL
+# MENU DE NAVEGAÇÃO PRINCIPAL - SIMPLIFICADO
 # =============================================================================
 
-# Container do menu de navegação
+# Criar um container visível para o menu
 st.markdown("""
 <div class="nav-container">
-    <div class="nav-buttons-container">
+    <h3 style="margin: 0 0 1rem 0; color: #0A2647; text-align: center;">NAVEGAÇÃO PRINCIPAL</h3>
 """, unsafe_allow_html=True)
 
-# Botões de navegação em linha
+# Criar 4 botões de navegação usando colunas
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
@@ -800,10 +759,7 @@ with col4:
         st.session_state.aba_atual = "relatorios"
         st.rerun()
 
-st.markdown("""
-    </div>
-</div>
-""", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
 
 # =============================================================================
 # CONTEÚDO DAS ABAS
@@ -844,6 +800,7 @@ if st.session_state.aba_atual == "lote_unico":
             )
         
         # Botão de cálculo sempre visível
+        st.markdown("###")
         calcular_lote = st.button(
             "📊 CALCULAR POTENCIAL", 
             type="primary",
@@ -875,10 +832,8 @@ if st.session_state.aba_atual == "lote_unico":
         </div>
         """, unsafe_allow_html=True)
     
-    # Verificar se há resultados ou se o botão foi pressionado
-    tem_resultados = st.session_state.resultados_lote is not None
-    
-    if calcular_lote or tem_resultados:
+    # Verificar se o botão foi pressionado ou se já existem resultados
+    if calcular_lote or st.session_state.resultados_lote is not None:
         if calcular_lote:
             with st.spinner("🔍 Analisando potencial de créditos..."):
                 # Obter parâmetros
@@ -962,7 +917,7 @@ if st.session_state.aba_atual == "lote_unico":
             st.markdown("---")
             st.markdown("### 📊 Visualizações")
             
-            # Recalcular para os gráficos
+            # Calcular novamente para os gráficos
             emissoes_aterro, potencial_total, docf = calcular_potencial_metano_aterro_lote(
                 quantidade_lote, umidade, temperatura, anos_analise
             )
