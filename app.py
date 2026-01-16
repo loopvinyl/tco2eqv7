@@ -42,26 +42,38 @@ df = load_data()
 # De acuerdo a los datos mostrados:
 # Columna 2: Nombre del municipio
 # Columna 17: Tipo de coleta executada
+# Columna Y (25ª coluna, índice 24): Massa coletada
 
 # Renombrar columnas para mayor claridad
 df = df.rename(columns={
     df.columns[2]: "MUNICÍPIO",
-    df.columns[17]: "TIPO_COLETA_EXECUTADA"
+    df.columns[17]: "TIPO_COLETA_EXECUTADA",
+    df.columns[24]: "MASSA_COLETADA"  # Coluna Y (25ª coluna)
 })
 
 COL_MUNICIPIO = "MUNICÍPIO"
 COL_TIPO_COLETA = "TIPO_COLETA_EXECUTADA"
+COL_MASSA = "MASSA_COLETADA"
 
 # =========================================================
-# Validación
+# Función para formatear la masa en toneladas
 # =========================================================
-if COL_MUNICIPIO not in df.columns or COL_TIPO_COLETA not in df.columns:
-    st.error("❌ As colunas esperadas não foram encontradas.")
-    st.write("Colunas disponíveis (primeras 20):")
-    st.write(df.columns[:20].tolist())
-    st.write("\nPrimeras filas para inspección:")
-    st.write(df.head(3))
-    st.stop()
+def formatar_massa(valor):
+    if pd.isna(valor):
+        return "Não informado"
+    try:
+        # Suponiendo que la masa está en toneladas
+        massa = float(valor)
+        if massa == 0:
+            return "0 t"
+        elif massa < 1:
+            return f"{massa:.3f} t".replace(".", ",")
+        elif massa < 1000:
+            return f"{massa:.1f} t".replace(".", ",")
+        else:
+            return f"{massa:,.0f} t".replace(",", ".")
+    except:
+        return str(valor)
 
 # =========================================================
 # Función de clasificación técnica (mejorada)
@@ -125,12 +137,29 @@ if df_mun.empty:
 st.subheader(f"📍 {municipio}")
 
 resultados = []
+total_massa = 0
+massa_compostagem = 0
+massa_vermicompostagem = 0
 
 for _, row in df_mun.iterrows():
     categoria, comp, vermi, justificativa = classificar_coleta(row.get(COL_TIPO_COLETA, None))
+    massa_valor = row.get(COL_MASSA, None)
+    
+    # Calcular valores para totais
+    try:
+        massa_float = float(massa_valor) if not pd.isna(massa_valor) else 0
+    except:
+        massa_float = 0
+    
+    total_massa += massa_float
+    if comp:
+        massa_compostagem += massa_float
+    if vermi:
+        massa_vermicompostagem += massa_float
 
     resultados.append({
         "Tipo de coleta executada": row.get(COL_TIPO_COLETA, "Não informado"),
+        "Massa coletada": formatar_massa(massa_valor),
         "Categoria técnica": categoria,
         "Compostagem": "✅" if comp else "❌",
         "Vermicompostagem": "✅" if vermi else "❌",
@@ -150,25 +179,73 @@ if not df_result.empty:
     tem_compostagem = any(df_result["Compostagem"] == "✅")
     tem_vermicompostagem = any(df_result["Vermicompostagem"] == "✅")
     
-    if tem_compostagem:
-        st.success("✔️ O município possui **potencial técnico para compostagem**.")
-    else:
-        st.error("❌ Não foi identificado potencial técnico para compostagem.")
+    # Resumo de massas
+    st.markdown("### 📦 Resumo das Massas Coletadas")
+    col1, col2, col3, col4 = st.columns(4)
     
-    if tem_vermicompostagem:
-        st.success("🐛 O município possui **potencial técnico para vermicompostagem**.")
-    else:
-        st.warning("⚠️ Não foram identificadas fontes adequadas para vermicompostagem.")
+    with col1:
+        st.metric("Massa total coletada", f"{total_massa:,.1f} t".replace(",", "."))
     
-    # Estadísticas adicionales
+    with col2:
+        st.metric("Massa apta para compostagem", f"{massa_compostagem:,.1f} t".replace(",", "."))
+    
+    with col3:
+        st.metric("Massa apta para vermicompostagem", f"{massa_vermicompostagem:,.1f} t".replace(",", "."))
+    
+    with col4:
+        if total_massa > 0:
+            percentual_comp = (massa_compostagem / total_massa * 100)
+            st.metric("% Apto para compostagem", f"{percentual_comp:.1f}%")
+        else:
+            st.metric("% Apto para compostagem", "0%")
+    
+    # Potencial técnico
+    st.markdown("### 🔍 Potencial Técnico")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if tem_compostagem:
+            st.success("✔️ **Potencial técnico para compostagem**")
+            if massa_compostagem > 0:
+                st.info(f"**Volume disponível:** {massa_compostagem:,.1f} t/ano".replace(",", "."))
+        else:
+            st.error("❌ Não foi identificado potencial técnico para compostagem.")
+    
+    with col2:
+        if tem_vermicompostagem:
+            st.success("🐛 **Potencial técnico para vermicompostagem**")
+            if massa_vermicompostagem > 0:
+                st.info(f"**Volume disponível:** {massa_vermicompostagem:,.1f} t/ano".replace(",", "."))
+        else:
+            st.warning("⚠️ Não foram identificadas fontes adequadas para vermicompostagem.")
+    
+    # Gráfico de distribuição (opcional)
+    if total_massa > 0 and (massa_compostagem > 0 or massa_vermicompostagem > 0):
+        st.markdown("### 📈 Distribuição das Massas")
+        
+        # Criar DataFrame para o gráfico
+        distribuicao_data = {
+            "Categoria": ["Total Coletado", "Apto Compostagem", "Apto Vermicompostagem"],
+            "Massa (t)": [total_massa, massa_compostagem, massa_vermicompostagem]
+        }
+        df_distribuicao = pd.DataFrame(distribuicao_data)
+        
+        # Mostrar tabela de distribuição
+        st.dataframe(df_distribuicao.style.format({"Massa (t)": "{:,.1f}".format}), 
+                    use_container_width=True)
+    
+    # Estatísticas adicionais
     st.markdown("---")
+    st.markdown("#### 📊 Estatísticas Detalhadas")
+    
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Total de tipos de coleta", len(df_result))
     with col2:
-        st.metric("Apto para compostagem", sum(df_result["Compostagem"] == "✅"))
+        st.metric("Tipos aptos para compostagem", sum(df_result["Compostagem"] == "✅"))
     with col3:
-        st.metric("Apto para vermicompostagem", sum(df_result["Vermicompostagem"] == "✅"))
+        st.metric("Tipos aptos para vermicompostagem", sum(df_result["Vermicompostagem"] == "✅"))
+    
 else:
     st.warning("⚠️ Não foram encontrados registros de coleta para análise.")
 
@@ -181,5 +258,6 @@ st.caption(
     "e adequação ao tratamento biológico (compostagem/vermicompostagem)."
 )
 st.caption(
-    "Fonte: SNIS - Sistema Nacional de Informações sobre Saneamento"
+    "Fonte: SNIS - Sistema Nacional de Informações sobre Saneamento | "
+    f"Coluna de massa: {COL_MASSA}"
 )
