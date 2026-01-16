@@ -97,6 +97,57 @@ st.markdown("""
         100% { transform: translate(20px, 20px); }
     }
     
+    /* ===== MENU DE NAVEGAÇÃO FIXO ===== */
+    .nav-container {
+        background: var(--card-white);
+        border-radius: var(--border-radius);
+        padding: 1rem;
+        margin-bottom: 2rem;
+        box-shadow: var(--shadow-sm);
+        border: 1px solid rgba(0,0,0,0.05);
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+    }
+    
+    .nav-buttons-container {
+        display: flex;
+        gap: 0.5rem;
+        width: 100%;
+    }
+    
+    .nav-button {
+        flex: 1;
+        padding: 1rem 1.5rem;
+        background: var(--neutral-light);
+        border: 2px solid transparent;
+        border-radius: 8px;
+        color: var(--neutral-gray);
+        font-weight: 600;
+        font-size: 0.95rem;
+        cursor: pointer;
+        transition: var(--transition);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        text-align: center;
+    }
+    
+    .nav-button:hover {
+        background: rgba(20, 66, 114, 0.1);
+        color: var(--primary-blue);
+        border-color: rgba(20, 66, 114, 0.2);
+        transform: translateY(-2px);
+    }
+    
+    .nav-button.active {
+        background: linear-gradient(135deg, var(--primary-blue) 0%, var(--primary-light) 100%);
+        color: white;
+        border-color: var(--primary-blue);
+        box-shadow: 0 4px 12px rgba(20, 66, 114, 0.2);
+    }
+    
     /* ===== CARDS MODERNOS ===== */
     .dashboard-card {
         background: var(--card-white);
@@ -697,57 +748,62 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
 # =============================================================================
-# MENU DE NAVEGAÇÃO PRINCIPAL
+# MENU DE NAVEGAÇÃO PRINCIPAL - AGORA VISÍVEL
 # =============================================================================
 
-# Criar container para o menu de navegação
+# Container do menu de navegação
 st.markdown("""
-<div style="background: white; border-radius: 12px; padding: 1rem; margin-bottom: 2rem; box-shadow: 0 4px 16px rgba(0,0,0,0.1); border: 1px solid rgba(0,0,0,0.05);">
-</div>
+<div class="nav-container">
+    <div class="nav-buttons-container">
 """, unsafe_allow_html=True)
 
-# Criar botões de navegação
+# Botões de navegação em linha
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    btn_lote = st.button(
-        "📦 LOTE ÚNICO", 
+    if st.button(
+        "📦 LOTE ÚNICO",
         use_container_width=True,
-        type="primary" if st.session_state.aba_atual == "lote_unico" else "secondary"
-    )
-    if btn_lote:
+        type="primary" if st.session_state.aba_atual == "lote_unico" else "secondary",
+        key="nav_lote"
+    ):
         st.session_state.aba_atual = "lote_unico"
         st.rerun()
 
 with col2:
-    btn_continuo = st.button(
-        "📈 ENTRADA CONTÍNUA", 
+    if st.button(
+        "📈 ENTRADA CONTÍNUA",
         use_container_width=True,
-        type="primary" if st.session_state.aba_atual == "entrada_continua" else "secondary"
-    )
-    if btn_continuo:
+        type="primary" if st.session_state.aba_atual == "entrada_continua" else "secondary",
+        key="nav_continuo"
+    ):
         st.session_state.aba_atual = "entrada_continua"
         st.rerun()
 
 with col3:
-    btn_municipal = st.button(
-        "🏙️ ANÁLISE MUNICIPAL", 
+    if st.button(
+        "🏙️ ANÁLISE MUNICIPAL",
         use_container_width=True,
-        type="primary" if st.session_state.aba_atual == "analise_municipal" else "secondary"
-    )
-    if btn_municipal:
+        type="primary" if st.session_state.aba_atual == "analise_municipal" else "secondary",
+        key="nav_municipal"
+    ):
         st.session_state.aba_atual = "analise_municipal"
         st.rerun()
 
 with col4:
-    btn_relatorios = st.button(
-        "📊 RELATÓRIOS", 
+    if st.button(
+        "📊 RELATÓRIOS",
         use_container_width=True,
-        type="primary" if st.session_state.aba_atual == "relatorios" else "secondary"
-    )
-    if btn_relatorios:
+        type="primary" if st.session_state.aba_atual == "relatorios" else "secondary",
+        key="nav_relatorios"
+    ):
         st.session_state.aba_atual = "relatorios"
         st.rerun()
+
+st.markdown("""
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 # =============================================================================
 # CONTEÚDO DAS ABAS
@@ -819,7 +875,10 @@ if st.session_state.aba_atual == "lote_unico":
         </div>
         """, unsafe_allow_html=True)
     
-    if calcular_lote or st.session_state.resultados_lote is not None:
+    # Verificar se há resultados ou se o botão foi pressionado
+    tem_resultados = st.session_state.resultados_lote is not None
+    
+    if calcular_lote or tem_resultados:
         if calcular_lote:
             with st.spinner("🔍 Analisando potencial de créditos..."):
                 # Obter parâmetros
@@ -903,19 +962,18 @@ if st.session_state.aba_atual == "lote_unico":
             st.markdown("---")
             st.markdown("### 📊 Visualizações")
             
-            # Calcular novamente para os gráficos se necessário
-            if calcular_lote:
-                emissoes_aterro, potencial_total, docf = calcular_potencial_metano_aterro_lote(
-                    quantidade_lote, umidade, temperatura, anos_analise
-                )
-                
-                emissoes_vermi, total_vermi = calcular_emissoes_vermicompostagem_lote(
-                    quantidade_lote, umidade
-                )
-                
-                emissoes_vermi_completa = np.zeros(len(emissoes_aterro))
-                dias_vermi = min(50, len(emissoes_vermi))
-                emissoes_vermi_completa[:dias_vermi] = emissoes_vermi[:dias_vermi]
+            # Recalcular para os gráficos
+            emissoes_aterro, potencial_total, docf = calcular_potencial_metano_aterro_lote(
+                quantidade_lote, umidade, temperatura, anos_analise
+            )
+            
+            emissoes_vermi, total_vermi = calcular_emissoes_vermicompostagem_lote(
+                quantidade_lote, umidade
+            )
+            
+            emissoes_vermi_completa = np.zeros(len(emissoes_aterro))
+            dias_vermi = min(50, len(emissoes_vermi))
+            emissoes_vermi_completa[:dias_vermi] = emissoes_vermi[:dias_vermi]
             
             # Gráfico 1: Comparação de Emissões
             datas = pd.date_range(start=datetime.now(), periods=len(emissoes_aterro), freq='D')
