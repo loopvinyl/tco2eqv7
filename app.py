@@ -181,67 +181,81 @@ if not df_podas.empty:
         )[[COL_DESTINO, "Massa (t)", "Percentual (%)"]],
         use_container_width=True
     )
+# =========================================================
+# 🔥 Emissões evitadas – tCO₂eq (desvio do aterro)
+# =========================================================
+st.subheader("🔥 Emissões evitadas por desvio do aterro (tCO₂eq)")
+
+GWP_CH4 = 27.2  # AR6 – 100 anos
+
+# Parâmetros econômicos automáticos (modelo técnico)
+PRECO_CARBONO_USD = 50.0     # US$/tCO2eq
+USD_BRL = 5.00               # câmbio médio
+USD_EUR = 0.92               # câmbio médio
+ANOS = 20
+
+massa_aterro_t = df_podas_destino.loc[
+    df_podas_destino[COL_DESTINO].apply(normalizar_texto) == "ATERRO SANITARIO",
+    "MASSA_FLOAT"
+].sum()
+
+if massa_aterro_t > 0:
+    DOC, MCF, F, OX, Ri = 0.15, 1.0, 0.5, 0.1, 0.0
+    DOCf = 0.0147 * 25 + 0.28
+
+    massa_kg = massa_aterro_t * 1000
+
+    # CH₄ no aterro (IPCC 2006)
+    ch4_aterro = (
+        massa_kg * DOC * DOCf * MCF * F * (16 / 12) * (1 - Ri) * (1 - OX)
+    ) / 1000
+
+    # CH₄ nos tratamentos biológicos
+    ch4_comp = ch4_compostagem_total(massa_kg) / 1000
+    ch4_vermi = ch4_vermicompostagem_total(massa_kg) / 1000
+
+    # Emissões evitadas (tCO₂eq)
+    evitado_comp_co2eq = (ch4_aterro - ch4_comp) * GWP_CH4
+    evitado_vermi_co2eq = (ch4_aterro - ch4_vermi) * GWP_CH4
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Compostagem", f"{formatar_numero_br(evitado_comp_co2eq)} tCO₂eq")
+    with col2:
+        st.metric("Vermicompostagem", f"{formatar_numero_br(evitado_vermi_co2eq)} tCO₂eq")
 
     # =========================================================
-    # 🔥 Emissões evitadas – tCO₂eq
+    # 💰 Valoração econômica automática – 20 anos
     # =========================================================
-    st.subheader("🔥 Emissões evitadas por desvio do aterro (tCO₂eq)")
+    st.markdown("### 💰 Valoração econômica das emissões evitadas (20 anos)")
+    st.caption(
+        f"Preço automático do carbono: **US$ {PRECO_CARBONO_USD}/tCO₂eq** | "
+        f"GWP CH₄ = 27,2 (AR6)"
+    )
 
-    massa_aterro_t = df_podas_destino.loc[
-        df_podas_destino[COL_DESTINO].apply(normalizar_texto) == "ATERRO SANITARIO",
-        "MASSA_FLOAT"
-    ].sum()
+    comp_20a = evitado_comp_co2eq * ANOS
+    vermi_20a = evitado_vermi_co2eq * ANOS
 
-    if massa_aterro_t > 0:
-        DOC, MCF, F, OX, Ri = 0.15, 1.0, 0.5, 0.1, 0.0
-        DOCf = 0.0147 * 25 + 0.28
+    valor_comp_usd = comp_20a * PRECO_CARBONO_USD
+    valor_vermi_usd = vermi_20a * PRECO_CARBONO_USD
 
-        massa_kg = massa_aterro_t * 1000
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**🌱 Compostagem**")
+        st.metric("tCO₂eq evitado (20 anos)", formatar_numero_br(comp_20a))
+        st.metric("Valor econômico (R$)", f"R$ {formatar_numero_br(valor_comp_usd * USD_BRL)}")
+        st.metric("Valor econômico (€)", f"€ {formatar_numero_br(valor_comp_usd * USD_EUR)}")
 
-        ch4_aterro = (
-            massa_kg * DOC * DOCf * MCF * F * (16 / 12) * (1 - Ri) * (1 - OX)
-        ) / 1000
+    with col2:
+        st.markdown("**🐛 Vermicompostagem**")
+        st.metric("tCO₂eq evitado (20 anos)", formatar_numero_br(vermi_20a))
+        st.metric("Valor econômico (R$)", f"R$ {formatar_numero_br(valor_vermi_usd * USD_BRL)}")
+        st.metric("Valor econômico (€)", f"€ {formatar_numero_br(valor_vermi_usd * USD_EUR)}")
 
-        ch4_comp = ch4_compostagem_total(massa_kg) / 1000
-        ch4_vermi = ch4_vermicompostagem_total(massa_kg) / 1000
+    st.caption(
+        "Valoração econômica automática baseada em preço fixo de carbono, "
+        "conversão direta de tCO₂eq e horizonte de 20 anos. "
+        "Aplicável a estudos técnicos, políticas públicas e projetos de mitigação."
+    )
 
-        evitado_comp_co2eq = (ch4_aterro - ch4_comp) * GWP_CH4
-        evitado_vermi_co2eq = (ch4_aterro - ch4_vermi) * GWP_CH4
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Compostagem", f"{formatar_numero_br(evitado_comp_co2eq)} tCO₂eq")
-        with col2:
-            st.metric("Vermicompostagem", f"{formatar_numero_br(evitado_vermi_co2eq)} tCO₂eq")
-
-        # =========================================================
-        # 💰 Valoração econômica – 20 anos
-        # =========================================================
-        st.markdown("### 💰 Valoração econômica das emissões evitadas (20 anos)")
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            preco = st.number_input("Preço do carbono (US$/tCO₂eq)", value=50.0)
-        with col2:
-            usd_brl = st.number_input("US$ → R$", value=5.0)
-        with col3:
-            usd_eur = st.number_input("US$ → €", value=0.92)
-
-        anos = 20
-
-        comp_20a = evitado_comp_co2eq * anos
-        vermi_20a = evitado_vermi_co2eq * anos
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Compostagem – 20 anos (R$)", f"R$ {formatar_numero_br(comp_20a * preco * usd_brl)}")
-            st.metric("Compostagem – 20 anos (€)", f"€ {formatar_numero_br(comp_20a * preco * usd_eur)}")
-        with col2:
-            st.metric("Vermicompostagem – 20 anos (R$)", f"R$ {formatar_numero_br(vermi_20a * preco * usd_brl)}")
-            st.metric("Vermicompostagem – 20 anos (€)", f"€ {formatar_numero_br(vermi_20a * preco * usd_eur)}")
-
-        st.caption(
-            "Emissões evitadas calculadas em tCO₂eq (AR6 – GWP CH₄ = 27,2), "
-            "a partir do desvio de podas e galhadas do aterro sanitário "
-            "para compostagem e vermicompostagem."
-        )
+    
