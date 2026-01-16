@@ -107,43 +107,12 @@ st.markdown("""
         border: 1px solid rgba(0,0,0,0.05);
     }
     
-    .nav-tabs {
-        display: flex;
-        gap: 0.5rem;
-        padding: 0.5rem;
-        background: var(--neutral-light);
-        border-radius: 10px;
-        margin: 0;
+    .nav-tab-content {
+        display: none;
     }
     
-    .nav-tab {
-        flex: 1;
-        text-align: center;
-        padding: 1rem 1.5rem;
-        background: transparent;
-        border: none;
-        border-radius: 8px;
-        color: var(--neutral-gray);
-        font-weight: 600;
-        font-size: 0.95rem;
-        cursor: pointer;
-        transition: var(--transition);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.75rem;
-    }
-    
-    .nav-tab:hover {
-        background: rgba(255,255,255,0.7);
-        color: var(--primary-blue);
-    }
-    
-    .nav-tab.active {
-        background: var(--card-white);
-        color: var(--primary-dark);
-        box-shadow: var(--shadow-sm);
-        transform: translateY(-1px);
+    .nav-tab-content.active {
+        display: block;
     }
     
     /* ===== CARDS MODERNOS ===== */
@@ -178,7 +147,7 @@ st.markdown("""
     .stat-card.info { border-left-color: var(--info); }
     
     /* ===== BOTÕES MODERNOS ===== */
-    .btn-primary {
+    .stButton > button {
         background: linear-gradient(135deg, var(--primary-blue) 0%, var(--primary-light) 100%) !important;
         color: white !important;
         border: none !important;
@@ -190,27 +159,10 @@ st.markdown("""
         box-shadow: 0 4px 12px rgba(20, 66, 114, 0.2) !important;
     }
     
-    .btn-primary:hover {
+    .stButton > button:hover {
         transform: translateY(-2px) !important;
         box-shadow: 0 6px 20px rgba(20, 66, 114, 0.3) !important;
         background: linear-gradient(135deg, var(--primary-light) 0%, var(--primary-blue) 100%) !important;
-    }
-    
-    .btn-secondary {
-        background: white !important;
-        color: var(--primary-blue) !important;
-        border: 2px solid var(--primary-blue) !important;
-        border-radius: 10px !important;
-        padding: 0.875rem 1.75rem !important;
-        font-weight: 600 !important;
-        font-size: 0.95rem !important;
-        transition: var(--transition) !important;
-    }
-    
-    .btn-secondary:hover {
-        background: var(--primary-blue) !important;
-        color: white !important;
-        transform: translateY(-1px) !important;
     }
     
     /* ===== SIDEBAR MODERNA ===== */
@@ -231,30 +183,6 @@ st.markdown("""
     [data-testid="stSidebar"] .stButton > button:hover {
         background: linear-gradient(135deg, #3AA69B 0%, var(--accent-teal) 100%) !important;
         transform: translateY(-1px) !important;
-    }
-    
-    /* ===== FORMULÁRIOS ===== */
-    .form-section {
-        background: var(--card-white);
-        border-radius: var(--border-radius);
-        padding: 2rem;
-        margin-bottom: 2rem;
-        box-shadow: var(--shadow-sm);
-        border: 1px solid rgba(0,0,0,0.05);
-    }
-    
-    .input-group {
-        margin-bottom: 1.5rem;
-    }
-    
-    .input-label {
-        display: block;
-        font-size: 0.875rem;
-        font-weight: 600;
-        color: var(--neutral-dark);
-        margin-bottom: 0.5rem;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
     }
     
     /* ===== BADGES MODERNOS ===== */
@@ -331,25 +259,6 @@ st.markdown("""
         margin: 0 0 1rem 0;
     }
     
-    h4 {
-        font-size: 1rem;
-        font-weight: 600;
-        color: var(--neutral-gray);
-        margin: 0 0 0.5rem 0;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-    
-    /* ===== GRÁFICOS E VISUAIS ===== */
-    .chart-container {
-        background: var(--card-white);
-        border-radius: var(--border-radius);
-        padding: 2rem;
-        margin-bottom: 2rem;
-        box-shadow: var(--shadow-sm);
-        border: 1px solid rgba(0,0,0,0.05);
-    }
-    
     /* ===== STATUS INDICATORS ===== */
     .status-dot {
         display: inline-block;
@@ -357,31 +266,10 @@ st.markdown("""
         height: 10px;
         border-radius: 50%;
         margin-right: 0.5rem;
-        position: relative;
-    }
-    
-    .status-dot::after {
-        content: '';
-        position: absolute;
-        top: -3px;
-        left: -3px;
-        right: -3px;
-        bottom: -3px;
-        border-radius: 50%;
-        animation: pulse 2s infinite;
-    }
-    
-    @keyframes pulse {
-        0% { box-shadow: 0 0 0 0 rgba(56, 161, 105, 0.7); }
-        70% { box-shadow: 0 0 0 10px rgba(56, 161, 105, 0); }
-        100% { box-shadow: 0 0 0 0 rgba(56, 161, 105, 0); }
-    }
-    
-    .status-active {
         background: var(--success);
     }
     
-    .status-active::after {
+    .status-active {
         background: var(--success);
     }
     
@@ -394,18 +282,6 @@ st.markdown("""
         box-shadow: var(--shadow-sm);
         border: 1px solid rgba(0,0,0,0.05);
         text-align: center;
-    }
-    
-    /* ===== UTILITIES ===== */
-    .text-gradient {
-        background: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-teal) 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-    }
-    
-    .shadow-card {
-        box-shadow: var(--shadow-md);
     }
     
     /* ===== SCROLLBAR PERSONALIZADA ===== */
@@ -667,6 +543,9 @@ if 'resultados_lote' not in st.session_state:
 if 'resultados_continuo' not in st.session_state:
     st.session_state.resultados_continuo = None
 
+if 'aba_atual' not in st.session_state:
+    st.session_state.aba_atual = "lote_unico"
+
 # =============================================================================
 # HEADER PRINCIPAL
 # =============================================================================
@@ -751,7 +630,7 @@ with st.sidebar:
     col1, col2 = st.columns(2)
     with col1:
         temperatura = st.slider(
-            "Temperatura",
+            "Temperatura (°C)",
             min_value=15.0,
             max_value=35.0,
             value=25.0,
@@ -762,7 +641,7 @@ with st.sidebar:
     
     with col2:
         umidade_valor = st.slider(
-            "Umidade",
+            "Umidade (%)",
             min_value=50.0,
             max_value=95.0,
             value=85.0,
@@ -849,405 +728,507 @@ with st.sidebar:
 # MENU DE NAVEGAÇÃO PRINCIPAL
 # =============================================================================
 
-st.markdown("""
-<div class="nav-container">
-    <div class="nav-tabs">
-        <button class="nav-tab active" onclick="window.location.hash = '#lote-unico'">
-            <span>📦</span>
-            <span>LOTE ÚNICO</span>
-        </button>
-        <button class="nav-tab" onclick="window.location.hash = '#entrada-continua'">
-            <span>📈</span>
-            <span>ENTRADA CONTÍNUA</span>
-        </button>
-        <button class="nav-tab" onclick="window.location.hash = '#analise-municipal'">
-            <span>🏙️</span>
-            <span>ANÁLISE MUNICIPAL</span>
-        </button>
-        <button class="nav-tab" onclick="window.location.hash = '#relatorios'">
-            <span>📊</span>
-            <span>RELATÓRIOS</span>
-        </button>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+st.markdown('<div class="nav-container">', unsafe_allow_html=True)
 
-# =============================================================================
-# SEÇÃO PRINCIPAL - LOTE ÚNICO
-# =============================================================================
-
-st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
-st.markdown("### 📦 Análise de Lote Único")
-st.markdown("Calcule o potencial de créditos de carbono para um único lote de resíduos orgânicos")
-
-# Layout principal
-col1, col2 = st.columns([2, 1])
-
+col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.markdown("#### Configuração do Lote")
-    
-    col1_1, col1_2 = st.columns(2)
-    with col1_1:
-        quantidade_lote = st.number_input(
-            "Peso do lote (kg)",
-            min_value=10.0,
-            max_value=10000.0,
-            value=100.0,
-            step=10.0,
-            help="Peso total do lote de resíduos orgânicos",
-            key="qtd_lote_main"
-        )
-    
-    with col1_2:
-        anos_analise = st.select_slider(
-            "Período de análise",
-            options=[1, 5, 10, 15, 20, 25, 30],
-            value=20,
-            help="Horizonte temporal para cálculo",
-            key="anos_lote_main"
-        )
-    
-    # Botão de cálculo
-    calcular_lote = st.button(
-        "📊 CALCULAR POTENCIAL", 
-        type="primary",
-        use_container_width=True,
-        key="btn_calc_main"
-    )
+    if st.button("📦 LOTE ÚNICO", use_container_width=True, type="primary" if st.session_state.aba_atual == "lote_unico" else "secondary"):
+        st.session_state.aba_atual = "lote_unico"
+        st.rerun()
 
 with col2:
-    st.markdown("#### Parâmetros Atuais")
-    
-    st.markdown(f"""
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
-        <div class="stat-card info">
-            <div style="font-size: 0.875rem; color: #4A5568; margin-bottom: 0.5rem; font-weight: 600;">TEMPERATURA</div>
-            <div style="font-size: 1.5rem; font-weight: 700; color: #2D3748;">{temperatura}°C</div>
-        </div>
-        <div class="stat-card info">
-            <div style="font-size: 0.875rem; color: #4A5568; margin-bottom: 0.5rem; font-weight: 600;">UMIDADE</div>
-            <div style="font-size: 1.5rem; font-weight: 700; color: #2D3748;">{umidade_valor}%</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown(f"""
-    <div class="stat-card premium">
-        <div style="font-size: 0.875rem; color: #4A5568; margin-bottom: 0.5rem; font-weight: 600;">METODOLOGIA</div>
-        <div style="font-size: 1.25rem; font-weight: 700; color: #2D3748;">{gwp_periodo.split('(')[0].strip()}</div>
-        <div style="font-size: 0.875rem; color: #718096; margin-top: 0.5rem;">IPCC AR6 2021</div>
-    </div>
-    """, unsafe_allow_html=True)
+    if st.button("📈 ENTRADA CONTÍNUA", use_container_width=True, type="primary" if st.session_state.aba_atual == "entrada_continua" else "secondary"):
+        st.session_state.aba_atual = "entrada_continua"
+        st.rerun()
 
-if calcular_lote:
-    with st.spinner("🔍 Analisando potencial de créditos..."):
-        # Obter parâmetros
-        cotacoes = st.session_state.cotacoes
-        parametros = st.session_state.parametros_globais
-        
-        # Calcular emissões
-        emissoes_aterro, potencial_total, docf = calcular_potencial_metano_aterro_lote(
-            quantidade_lote, umidade, temperatura, anos_analise
-        )
-        
-        emissoes_vermi, total_vermi = calcular_emissoes_vermicompostagem_lote(
-            quantidade_lote, umidade
-        )
-        
-        # Estender emissões da vermicompostagem
-        emissoes_vermi_completa = np.zeros(len(emissoes_aterro))
-        dias_vermi = min(50, len(emissoes_vermi))
-        emissoes_vermi_completa[:dias_vermi] = emissoes_vermi[:dias_vermi]
-        
-        # Calcular créditos
-        resultados = calcular_creditos_carbono(
-            emissoes_aterro, emissoes_vermi_completa,
-            cotacoes.get('preco_carbono', 85.50), 
-            cotacoes.get('taxa_cambio', 5.50), 
-            anos_analise,
-            usar_gwp_20=parametros['usar_gwp_20']
-        )
-        
-        st.session_state.resultados_lote = resultados
-        
-        # ==================== RESULTADOS ====================
-        st.markdown("---")
-        st.markdown("### 📈 Resultados da Análise")
-        
-        # Métricas principais em grid
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.markdown(criar_metric_card(
-                "Créditos Gerados",
-                formatar_br(resultados['co2eq_evitado_total']),
-                f"tCO₂eq | {resultados['gwp_utilizado']}",
-                "success",
-                "💰"
-            ), unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown(criar_metric_card(
-                "Valor Estimado",
-                f"R$ {formatar_br(resultados['valor_total_brl'])}",
-                f"€ {formatar_br(resultados['valor_total_eur'])}",
-                "premium",
-                "💵"
-            ), unsafe_allow_html=True)
-        
-        with col3:
-            valor_por_kg = resultados['valor_total_brl'] / quantidade_lote
-            st.markdown(criar_metric_card(
-                "Valor por kg",
-                f"R$ {formatar_br(valor_por_kg)}",
-                "por kg de resíduo",
-                "info",
-                "⚖️"
-            ), unsafe_allow_html=True)
-        
-        with col4:
-            st.markdown(criar_metric_card(
-                "Metano Evitado",
-                formatar_br(resultados['emissoes_evitadas_kg_ch4']),
-                "kg CH₄ reduzidos",
-                "warning",
-                "🌿"
-            ), unsafe_allow_html=True)
-        
-        # ==================== GRÁFICOS ====================
-        st.markdown("---")
-        st.markdown("### 📊 Visualizações")
-        
-        # Gráfico 1: Comparação de Emissões
-        datas = pd.date_range(start=datetime.now(), periods=len(emissoes_aterro), freq='D')
-        df_emissoes = pd.DataFrame({
-            'Data': datas,
-            'Aterro - CH₄ (kg/dia)': emissoes_aterro,
-            'Vermicompostagem - CH₄ (kg/dia)': emissoes_vermi_completa,
-        })
-        
-        fig1 = go.Figure()
-        
-        fig1.add_trace(go.Scatter(
-            x=df_emissoes['Data'],
-            y=df_emissoes['Aterro - CH₄ (kg/dia)'],
-            name='Aterro Sanitário',
-            line=dict(color='#E53E3E', width=2.5),
-            fill='tozeroy',
-            fillcolor='rgba(229, 62, 62, 0.1)',
-            hovertemplate='<b>Aterro</b><br>Data: %{x}<br>CH₄: %{y:.3f} kg/dia<extra></extra>'
-        ))
-        
-        fig1.add_trace(go.Scatter(
-            x=df_emissoes['Data'],
-            y=df_emissoes['Vermicompostagem - CH₄ (kg/dia)'],
-            name='Vermicompostagem',
-            line=dict(color='#38A169', width=2.5),
-            fill='tozeroy',
-            fillcolor='rgba(56, 161, 105, 0.1)',
-            hovertemplate='<b>Vermicompostagem</b><br>Data: %{x}<br>CH₄: %{y:.3f} kg/dia<extra></extra>'
-        ))
-        
-        fig1.update_layout(
-            title=dict(
-                text='Emissões Diárias de Metano',
-                font=dict(size=16, color='#2D3748', family='Inter')
-            ),
-            xaxis_title='Data',
-            yaxis_title='kg CH₄ por dia',
-            hovermode='x unified',
-            height=500,
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            font=dict(color='#4A5568', family='Inter'),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1,
-                bgcolor='rgba(255, 255, 255, 0.9)',
-                bordercolor='#E2E8F0',
-                borderwidth=1
-            ),
-            margin=dict(t=60, l=60, r=60, b=60)
-        )
-        
-        st.plotly_chart(fig1, use_container_width=True)
-        
-        # ==================== RESUMO DETALHADO ====================
-        with st.expander("📋 RELATÓRIO COMPLETO", expanded=False):
-            st.markdown(f"""
-            ### 📋 Relatório Técnico - Lote Único
-            
-            **📊 DADOS DE ENTRADA**
-            | Parâmetro | Valor | Unidade |
-            |-----------|-------|---------|
-            | Peso do lote | {formatar_br(quantidade_lote)} | kg |
-            | Período de análise | {anos_analise} | anos |
-            | Umidade | {formatar_br(umidade_valor)} | % |
-            | Temperatura | {formatar_br(temperatura)} | °C |
-            | DOCf calculado | {formatar_br(docf)} | - |
-            | Fator GWP | {resultados['gwp_utilizado']} | - |
-            
-            **🌿 ANÁLISE DE EMISSÕES**
-            | Cenário | Emissões CH₄ | Equivalente CO₂ |
-            |---------|--------------|-----------------|
-            | Aterro Sanitário | {formatar_br(emissoes_aterro.sum())} kg | {formatar_br(resultados['co2eq_aterro_total'])} tCO₂eq |
-            | Vermicompostagem | {formatar_br(emissoes_vermi_completa.sum())} kg | {formatar_br(resultados['co2eq_vermi_total'])} tCO₂eq |
-            | **Redução Total** | **{formatar_br(resultados['emissoes_evitadas_kg_ch4'])} kg** | **{formatar_br(resultados['co2eq_evitado_total'])} tCO₂eq** |
-            
-            **💰 VIABILIDADE FINANCEIRA**
-            | Item | Valor | Detalhes |
-            |------|-------|----------|
-            | Preço do carbono | € {formatar_br(cotacoes.get('preco_carbono', 85.50))} | /tCO₂eq |
-            | Taxa de câmbio | R$ {formatar_br(cotacoes.get('taxa_cambio', 5.50))} | EUR/BRL |
-            | Valor total | R$ {formatar_br(resultados['valor_total_brl'])} | € {formatar_br(resultados['valor_total_eur'])} |
-            | Valor anual | R$ {formatar_br(resultados['valor_anual_brl'])} | /ano |
-            | Valor por kg | R$ {formatar_br(valor_por_kg)} | /kg de resíduo |
-            
-            **⚡ IMPACTO AMBIENTAL**
-            - **Equivalente em carros:** {formatar_br(resultados['co2eq_evitado_total'] / 2.3)} anos de um carro médio
-            - **Árvores equivalentes:** {formatar_br(resultados['co2eq_evitado_total'] * 20)} árvores adultas
-            - **Eficiência:** {formatar_br((1 - emissoes_vermi_completa.sum()/emissoes_aterro.sum())*100)}% de redução
-            """)
+with col3:
+    if st.button("🏙️ ANÁLISE MUNICIPAL", use_container_width=True, type="primary" if st.session_state.aba_atual == "analise_municipal" else "secondary"):
+        st.session_state.aba_atual = "analise_municipal"
+        st.rerun()
+
+with col4:
+    if st.button("📊 RELATÓRIOS", use_container_width=True, type="primary" if st.session_state.aba_atual == "relatorios" else "secondary"):
+        st.session_state.aba_atual = "relatorios"
+        st.rerun()
 
 st.markdown('</div>', unsafe_allow_html=True)
 
 # =============================================================================
-# SEÇÃO DE ENTRADA CONTÍNUA
+# CONTEÚDO DAS ABAS
 # =============================================================================
 
-st.markdown("""
-<div class="dashboard-card" style="margin-top: 2rem;">
-    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
-        <div>
-            <h3 style="margin: 0 0 0.5rem 0;">📈 Análise de Entrada Contínua</h3>
-            <p style="color: #4A5568; margin: 0;">Simule o potencial para operações de processamento diário de resíduos</p>
-        </div>
-        <span class="badge badge-warning">EM BREVE</span>
-    </div>
+if st.session_state.aba_atual == "lote_unico":
+    st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
     
-    <div style="background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%); padding: 2rem; border-radius: 12px; text-align: center; border: 1px solid #F59E0B;">
+    st.markdown("### 📦 Análise de Lote Único")
+    st.markdown("Calcule o potencial de créditos de carbono para um único lote de resíduos orgânicos")
+    
+    # Layout principal
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.markdown("#### Configuração do Lote")
+        
+        col1_1, col1_2 = st.columns(2)
+        with col1_1:
+            quantidade_lote = st.number_input(
+                "Peso do lote (kg)",
+                min_value=10.0,
+                max_value=10000.0,
+                value=100.0,
+                step=10.0,
+                help="Peso total do lote de resíduos orgânicos",
+                key="qtd_lote_main"
+            )
+        
+        with col1_2:
+            anos_analise = st.slider(
+                "Período de análise (anos)",
+                min_value=1,
+                max_value=30,
+                value=20,
+                help="Horizonte temporal para cálculo",
+                key="anos_lote_main"
+            )
+        
+        # Botão de cálculo sempre visível
+        calcular_lote = st.button(
+            "📊 CALCULAR POTENCIAL", 
+            type="primary",
+            use_container_width=True,
+            key="btn_calc_main"
+        )
+    
+    with col2:
+        st.markdown("#### Parâmetros Atuais")
+        
+        st.markdown(f"""
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
+            <div class="stat-card info">
+                <div style="font-size: 0.875rem; color: #4A5568; margin-bottom: 0.5rem; font-weight: 600;">TEMPERATURA</div>
+                <div style="font-size: 1.5rem; font-weight: 700; color: #2D3748;">{temperatura}°C</div>
+            </div>
+            <div class="stat-card info">
+                <div style="font-size: 0.875rem; color: #4A5568; margin-bottom: 0.5rem; font-weight: 600;">UMIDADE</div>
+                <div style="font-size: 1.5rem; font-weight: 700; color: #2D3748;">{umidade_valor}%</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div class="stat-card premium">
+            <div style="font-size: 0.875rem; color: #4A5568; margin-bottom: 0.5rem; font-weight: 600;">METODOLOGIA</div>
+            <div style="font-size: 1.25rem; font-weight: 700; color: #2D3748;">{gwp_periodo.split('(')[0].strip()}</div>
+            <div style="font-size: 0.875rem; color: #718096; margin-top: 0.5rem;">IPCC AR6 2021</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    if calcular_lote or st.session_state.resultados_lote is not None:
+        if calcular_lote:
+            with st.spinner("🔍 Analisando potencial de créditos..."):
+                # Obter parâmetros
+                cotacoes = st.session_state.cotacoes
+                parametros = st.session_state.parametros_globais
+                
+                # Calcular emissões
+                emissoes_aterro, potencial_total, docf = calcular_potencial_metano_aterro_lote(
+                    quantidade_lote, umidade, temperatura, anos_analise
+                )
+                
+                emissoes_vermi, total_vermi = calcular_emissoes_vermicompostagem_lote(
+                    quantidade_lote, umidade
+                )
+                
+                # Estender emissões da vermicompostagem
+                emissoes_vermi_completa = np.zeros(len(emissoes_aterro))
+                dias_vermi = min(50, len(emissoes_vermi))
+                emissoes_vermi_completa[:dias_vermi] = emissoes_vermi[:dias_vermi]
+                
+                # Calcular créditos
+                resultados = calcular_creditos_carbono(
+                    emissoes_aterro, emissoes_vermi_completa,
+                    cotacoes.get('preco_carbono', 85.50), 
+                    cotacoes.get('taxa_cambio', 5.50), 
+                    anos_analise,
+                    usar_gwp_20=parametros['usar_gwp_20']
+                )
+                
+                st.session_state.resultados_lote = resultados
+        
+        # Mostrar resultados se existirem
+        if st.session_state.resultados_lote:
+            resultados = st.session_state.resultados_lote
+            
+            # ==================== RESULTADOS ====================
+            st.markdown("---")
+            st.markdown("### 📈 Resultados da Análise")
+            
+            # Métricas principais em grid
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.markdown(criar_metric_card(
+                    "Créditos Gerados",
+                    formatar_br(resultados['co2eq_evitado_total']),
+                    f"tCO₂eq | {resultados['gwp_utilizado']}",
+                    "success",
+                    "💰"
+                ), unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown(criar_metric_card(
+                    "Valor Estimado",
+                    f"R$ {formatar_br(resultados['valor_total_brl'])}",
+                    f"€ {formatar_br(resultados['valor_total_eur'])}",
+                    "premium",
+                    "💵"
+                ), unsafe_allow_html=True)
+            
+            with col3:
+                valor_por_kg = resultados['valor_total_brl'] / quantidade_lote
+                st.markdown(criar_metric_card(
+                    "Valor por kg",
+                    f"R$ {formatar_br(valor_por_kg)}",
+                    "por kg de resíduo",
+                    "info",
+                    "⚖️"
+                ), unsafe_allow_html=True)
+            
+            with col4:
+                st.markdown(criar_metric_card(
+                    "Metano Evitado",
+                    formatar_br(resultados['emissoes_evitadas_kg_ch4']),
+                    "kg CH₄ reduzidos",
+                    "warning",
+                    "🌿"
+                ), unsafe_allow_html=True)
+            
+            # ==================== GRÁFICOS ====================
+            st.markdown("---")
+            st.markdown("### 📊 Visualizações")
+            
+            # Calcular novamente para os gráficos se necessário
+            if calcular_lote:
+                emissoes_aterro, potencial_total, docf = calcular_potencial_metano_aterro_lote(
+                    quantidade_lote, umidade, temperatura, anos_analise
+                )
+                
+                emissoes_vermi, total_vermi = calcular_emissoes_vermicompostagem_lote(
+                    quantidade_lote, umidade
+                )
+                
+                emissoes_vermi_completa = np.zeros(len(emissoes_aterro))
+                dias_vermi = min(50, len(emissoes_vermi))
+                emissoes_vermi_completa[:dias_vermi] = emissoes_vermi[:dias_vermi]
+            
+            # Gráfico 1: Comparação de Emissões
+            datas = pd.date_range(start=datetime.now(), periods=len(emissoes_aterro), freq='D')
+            df_emissoes = pd.DataFrame({
+                'Data': datas,
+                'Aterro - CH₄ (kg/dia)': emissoes_aterro,
+                'Vermicompostagem - CH₄ (kg/dia)': emissoes_vermi_completa,
+            })
+            
+            fig1 = go.Figure()
+            
+            fig1.add_trace(go.Scatter(
+                x=df_emissoes['Data'],
+                y=df_emissoes['Aterro - CH₄ (kg/dia)'],
+                name='Aterro Sanitário',
+                line=dict(color='#E53E3E', width=2.5),
+                fill='tozeroy',
+                fillcolor='rgba(229, 62, 62, 0.1)',
+                hovertemplate='<b>Aterro</b><br>Data: %{x}<br>CH₄: %{y:.3f} kg/dia<extra></extra>'
+            ))
+            
+            fig1.add_trace(go.Scatter(
+                x=df_emissoes['Data'],
+                y=df_emissoes['Vermicompostagem - CH₄ (kg/dia)'],
+                name='Vermicompostagem',
+                line=dict(color='#38A169', width=2.5),
+                fill='tozeroy',
+                fillcolor='rgba(56, 161, 105, 0.1)',
+                hovertemplate='<b>Vermicompostagem</b><br>Data: %{x}<br>CH₄: %{y:.3f} kg/dia<extra></extra>'
+            ))
+            
+            fig1.update_layout(
+                title=dict(
+                    text='Emissões Diárias de Metano',
+                    font=dict(size=16, color='#2D3748')
+                ),
+                xaxis_title='Data',
+                yaxis_title='kg CH₄ por dia',
+                hovermode='x unified',
+                height=500,
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                font=dict(color='#4A5568'),
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1,
+                    bgcolor='rgba(255, 255, 255, 0.9)',
+                    bordercolor='#E2E8F0',
+                    borderwidth=1
+                ),
+                margin=dict(t=60, l=60, r=60, b=60)
+            )
+            
+            st.plotly_chart(fig1, use_container_width=True)
+            
+            # ==================== RESUMO DETALHADO ====================
+            with st.expander("📋 RELATÓRIO COMPLETO", expanded=False):
+                st.markdown(f"""
+                ### 📋 Relatório Técnico - Lote Único
+                
+                **📊 DADOS DE ENTRADA**
+                | Parâmetro | Valor | Unidade |
+                |-----------|-------|---------|
+                | Peso do lote | {formatar_br(quantidade_lote)} | kg |
+                | Período de análise | {anos_analise} | anos |
+                | Umidade | {formatar_br(umidade_valor)} | % |
+                | Temperatura | {formatar_br(temperatura)} | °C |
+                | DOCf calculado | {formatar_br(docf)} | - |
+                | Fator GWP | {resultados['gwp_utilizado']} | - |
+                
+                **🌿 ANÁLISE DE EMISSÕES**
+                | Cenário | Emissões CH₄ | Equivalente CO₂ |
+                |---------|--------------|-----------------|
+                | Aterro Sanitário | {formatar_br(emissoes_aterro.sum())} kg | {formatar_br(resultados['co2eq_aterro_total'])} tCO₂eq |
+                | Vermicompostagem | {formatar_br(emissoes_vermi_completa.sum())} kg | {formatar_br(resultados['co2eq_vermi_total'])} tCO₂eq |
+                | **Redução Total** | **{formatar_br(resultados['emissoes_evitadas_kg_ch4'])} kg** | **{formatar_br(resultados['co2eq_evitado_total'])} tCO₂eq** |
+                
+                **💰 VIABILIDADE FINANCEIRA**
+                | Item | Valor | Detalhes |
+                |------|-------|----------|
+                | Preço do carbono | € {formatar_br(cotacoes.get('preco_carbono', 85.50))} | /tCO₂eq |
+                | Taxa de câmbio | R$ {formatar_br(cotacoes.get('taxa_cambio', 5.50))} | EUR/BRL |
+                | Valor total | R$ {formatar_br(resultados['valor_total_brl'])} | € {formatar_br(resultados['valor_total_eur'])} |
+                | Valor anual | R$ {formatar_br(resultados['valor_anual_brl'])} | /ano |
+                | Valor por kg | R$ {formatar_br(valor_por_kg)} | /kg de resíduo |
+                
+                **⚡ IMPACTO AMBIENTAL**
+                - **Equivalente em carros:** {formatar_br(resultados['co2eq_evitado_total'] / 2.3)} anos de um carro médio
+                - **Árvores equivalentes:** {formatar_br(resultados['co2eq_evitado_total'] * 20)} árvores adultas
+                - **Eficiência:** {formatar_br((1 - emissoes_vermi_completa.sum()/emissoes_aterro.sum())*100)}% de redução
+                """)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+elif st.session_state.aba_atual == "entrada_continua":
+    st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
+    
+    col_header = st.columns([4, 1])
+    with col_header[0]:
+        st.markdown("### 📈 Análise de Entrada Contínua")
+        st.markdown("Simule o potencial para operações de processamento diário de resíduos")
+    with col_header[1]:
+        st.markdown('<span class="badge badge-warning">EM BREVE</span>', unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%); padding: 2rem; border-radius: 12px; text-align: center; border: 1px solid #F59E0B; margin: 2rem 0;">
         <div style="font-size: 3rem; margin-bottom: 1rem;">🚧</div>
         <h4 style="color: #92400E; margin: 0 0 0.5rem 0;">Funcionalidade em Desenvolvimento</h4>
         <p style="color: #92400E; margin: 0;">Estamos trabalhando na análise contínua. Em breve você poderá calcular créditos para operações 24/7!</p>
     </div>
+    """, unsafe_allow_html=True)
     
-    <div style="margin-top: 2rem;">
-        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.5rem;">
-            <div>
-                <h4 style="margin-bottom: 1rem;">Funcionalidades Planejadas</h4>
-                <ul style="color: #4A5568; padding-left: 1.5rem;">
-                    <li>Simulação de produção contínua</li>
-                    <li>Projeção financeira multi-anual</li>
-                    <li>Análise de viabilidade econômica</li>
-                    <li>Sensibilidade a variações de preço</li>
-                    <li>Relatórios automáticos</li>
-                </ul>
-            </div>
-            <div>
-                <h4 style="margin-bottom: 1rem;">Benefícios</h4>
-                <ul style="color: #4A5568; padding-left: 1.5rem;">
-                    <li>Otimização de operações</li>
-                    <li>Planejamento de capacidade</li>
-                    <li>Análise de ROI detalhada</li>
-                    <li>Integração com sistemas ERP</li>
-                    <li>Suporte a múltiplas plantas</li>
-                </ul>
-            </div>
-        </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-# =============================================================================
-# SEÇÃO DE ANÁLISE MUNICIPAL
-# =============================================================================
-
-st.markdown("""
-<div class="dashboard-card" style="margin-top: 2rem;">
-    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
-        <div>
-            <h3 style="margin: 0 0 0.5rem 0;">🏙️ Análise de Potencial Municipal</h3>
-            <p style="color: #4A5568; margin: 0;">Avalie o potencial agregado de créditos de carbono para municípios</p>
-        </div>
-        <span class="badge badge-info">PLUS</span>
-    </div>
+    col1, col2 = st.columns(2)
     
-    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 2rem; margin-bottom: 2rem;">
-        <div>
-            <h4 style="margin-bottom: 1rem;">Como Funcionará</h4>
-            <p style="color: #4A5568; margin-bottom: 1.5rem;">
-                A análise municipal permitirá avaliar o potencial de créditos de carbono em escala regional, 
-                identificando oportunidades de investimento e priorizando ações de gestão de resíduos.
-            </p>
-            
-            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; margin-bottom: 1.5rem;">
-                <div class="stat-card info">
-                    <div style="font-size: 0.875rem; color: #4A5568; margin-bottom: 0.5rem; font-weight: 600;">MUNICÍPIOS</div>
-                    <div style="font-size: 1.5rem; font-weight: 700; color: #2D3748;">5.570+</div>
-                </div>
-                <div class="stat-card success">
-                    <div style="font-size: 0.875rem; color: #4A5568; margin-bottom: 0.5rem; font-weight: 600;">POTENCIAL BR</div>
-                    <div style="font-size: 1.5rem; font-weight: 700; color: #2D3748;">R$ 15B/ano</div>
-                </div>
-            </div>
+    with col1:
+        st.markdown("#### 🎯 Funcionalidades Planejadas")
+        st.markdown("""
+        <div style="background: #F8FAFC; padding: 1.5rem; border-radius: 8px; border: 1px solid #E2E8F0; margin-top: 1rem;">
+            <ul style="color: #4A5568; padding-left: 1.5rem; margin: 0;">
+                <li style="margin-bottom: 0.5rem;">📊 Simulação de produção contínua</li>
+                <li style="margin-bottom: 0.5rem;">💰 Projeção financeira multi-anual</li>
+                <li style="margin-bottom: 0.5rem;">📈 Análise de viabilidade econômica</li>
+                <li style="margin-bottom: 0.5rem;">⚖️ Sensibilidade a variações de preço</li>
+                <li>📋 Relatórios automáticos detalhados</li>
+            </ul>
         </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("#### 🏆 Benefícios")
+        st.markdown("""
+        <div style="background: #F0F9FF; padding: 1.5rem; border-radius: 8px; border: 1px solid #BAE6FD; margin-top: 1rem;">
+            <ul style="color: #075985; padding-left: 1.5rem; margin: 0;">
+                <li style="margin-bottom: 0.5rem;">🚀 Otimização de operações</li>
+                <li style="margin-bottom: 0.5rem;">📅 Planejamento de capacidade</li>
+                <li style="margin-bottom: 0.5rem;">💹 Análise de ROI detalhada</li>
+                <li style="margin-bottom: 0.5rem;">🔗 Integração com sistemas ERP</li>
+                <li>🏭 Suporte a múltiplas plantas</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+elif st.session_state.aba_atual == "analise_municipal":
+    st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
+    
+    col_header = st.columns([4, 1])
+    with col_header[0]:
+        st.markdown("### 🏙️ Análise de Potencial Municipal")
+        st.markdown("Avalie o potencial agregado de créditos de carbono para municípios")
+    with col_header[1]:
+        st.markdown('<span class="badge badge-info">PLUS</span>', unsafe_allow_html=True)
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.markdown("""
+        #### Como Funcionará
         
+        A análise municipal permitirá avaliar o potencial de créditos de carbono em escala regional, 
+        identificando oportunidades de investimento e priorizando ações de gestão de resíduos.
+        
+        ##### Principais Vantagens:
+        - **Análise em larga escala** para municípios brasileiros
+        - **Identificação** de áreas com maior potencial
+        - **Priorização** de investimentos
+        - **Planejamento** regional integrado
+        - **Negociação** em bloco de créditos
+        """)
+        
+        col1_1, col1_2 = st.columns(2)
+        with col1_1:
+            st.markdown(criar_metric_card(
+                "MUNICÍPIOS",
+                "5.570+",
+                "Total no Brasil",
+                "info",
+                "🏙️"
+            ), unsafe_allow_html=True)
+        
+        with col1_2:
+            st.markdown(criar_metric_card(
+                "POTENCIAL BR",
+                "R$ 15B/ano",
+                "Estimativa conservadora",
+                "success",
+                "💰"
+            ), unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
         <div style="background: linear-gradient(135deg, #EBF8FF 0%, #BEE3F8 100%); padding: 1.5rem; border-radius: 12px; border: 1px solid #90CDF4;">
             <h4 style="color: #2C5282; margin: 0 0 1rem 0;">📋 Formato dos Dados</h4>
             <div style="color: #2C5282; font-size: 0.875rem;">
-                <div style="margin-bottom: 0.5rem;">• Nome do município</div>
-                <div style="margin-bottom: 0.5rem;">• População estimada</div>
-                <div style="margin-bottom: 0.5rem;">• Resíduos diários (t)</div>
-                <div style="margin-bottom: 0.5rem;">• Fração orgânica</div>
-                <div>• Taxa de coleta</div>
+                <div style="margin-bottom: 0.5rem;">📍 Nome do município</div>
+                <div style="margin-bottom: 0.5rem;">👥 População estimada</div>
+                <div style="margin-bottom: 0.5rem;">🗑️ Resíduos diários (t)</div>
+                <div style="margin-bottom: 0.5rem;">🌿 Fração orgânica</div>
+                <div>📊 Taxa de coleta</div>
             </div>
         </div>
-    </div>
+        """, unsafe_allow_html=True)
     
-    <div style="border-top: 1px solid #E2E8F0; padding-top: 1.5rem;">
-        <h4 style="margin-bottom: 1rem;">Exemplo de Dados Municipais</h4>
-        <div style="overflow-x: auto;">
-            <table style="width: 100%; border-collapse: collapse;">
-                <thead>
-                    <tr style="background: #F7FAFC;">
-                        <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #E2E8F0;">Município</th>
-                        <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #E2E8F0;">Estado</th>
-                        <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #E2E8F0;">População</th>
-                        <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #E2E8F0;">Resíduos (t/dia)</th>
-                        <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #E2E8F0;">% Orgânico</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">São Paulo</td>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">SP</td>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">12,3 mi</td>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">12.000</td>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">52%</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">Rio de Janeiro</td>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">RJ</td>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">6,8 mi</td>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">6.500</td>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">48%</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">Belo Horizonte</td>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">MG</td>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">2,5 mi</td>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">2.500</td>
-                        <td style="padding: 0.75rem; border-bottom: 1px solid #E2E8F0;">50%</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+    st.markdown("---")
+    
+    st.markdown("#### 📊 Exemplo de Dados Municipais")
+    
+    # Criar DataFrame de exemplo
+    dados_exemplo = pd.DataFrame({
+        'Município': ['São Paulo', 'Rio de Janeiro', 'Belo Horizonte', 'Salvador', 'Fortaleza'],
+        'Estado': ['SP', 'RJ', 'MG', 'BA', 'CE'],
+        'População': ['12,3 mi', '6,8 mi', '2,5 mi', '2,9 mi', '2,7 mi'],
+        'Resíduos (t/dia)': ['12.000', '6.500', '2.500', '2.900', '2.700'],
+        '% Orgânico': ['52%', '48%', '50%', '55%', '53%']
+    })
+    
+    # Estilizar a tabela
+    st.dataframe(
+        dados_exemplo,
+        use_container_width=True,
+        column_config={
+            "Município": st.column_config.TextColumn("Município", width="medium"),
+            "Estado": st.column_config.TextColumn("Estado", width="small"),
+            "População": st.column_config.TextColumn("População", width="medium"),
+            "Resíduos (t/dia)": st.column_config.TextColumn("Resíduos (t/dia)", width="medium"),
+            "% Orgânico": st.column_config.ProgressColumn(
+                "% Orgânico",
+                format="%d%%",
+                min_value=0,
+                max_value=100,
+                width="medium"
+            )
+        }
+    )
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+elif st.session_state.aba_atual == "relatorios":
+    st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
+    
+    col_header = st.columns([4, 1])
+    with col_header[0]:
+        st.markdown("### 📊 Relatórios e Análises")
+        st.markdown("Acesse relatórios detalhados e análises avançadas")
+    with col_header[1]:
+        st.markdown('<span class="badge badge-premium">PREMIUM</span>', unsafe_allow_html=True)
+    
+    st.info("""
+    **Recursos Premium Disponíveis em Breve:**
+    
+    - Relatórios personalizados em PDF/Excel
+    - Análises comparativas entre cenários
+    - Dashboards executivos
+    - Exportação de dados brutos
+    - API para integração com outros sistemas
+    """, icon="🚀")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown(criar_metric_card(
+            "Relatórios",
+            "PDF + Excel",
+            "Formatos suportados",
+            "info",
+            "📄"
+        ), unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown(criar_metric_card(
+            "Dashboards",
+            "Interativos",
+            "Tempo real",
+            "success",
+            "📈"
+        ), unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown(criar_metric_card(
+            "API",
+            "REST API",
+            "Integração total",
+            "warning",
+            "🔗"
+        ), unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    st.markdown("#### 📋 Tipos de Relatórios Disponíveis")
+    
+    tipos_relatorios = {
+        "📊 Técnico": "Análise detalhada com metodologia IPCC",
+        "💰 Financeiro": "Projeções de ROI e valorização",
+        "🌍 Ambiental": "Impacto climático e equivalências",
+        "🏭 Operacional": "Otimização de processos e custos",
+        "📈 Executivo": "Resumo para tomada de decisão"
+    }
+    
+    for tipo, descricao in tipos_relatorios.items():
+        with st.expander(f"{tipo}"):
+            st.markdown(f"**Descrição:** {descricao}")
+            st.markdown("**Conteúdo:** Metodologia, cálculos, resultados, recomendações")
+            st.markdown("**Formato:** PDF detalhado (20-30 páginas)")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # =============================================================================
 # FOOTER
@@ -1315,4 +1296,4 @@ st.markdown("""
         </div>
     </div>
 </div>
-""", unsafe_allow_html=True)
+""".format(datetime.now().strftime("%d/%m/%Y %H:%M:%S")), unsafe_allow_html=True)
