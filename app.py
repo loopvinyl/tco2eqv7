@@ -34,425 +34,282 @@ st.set_page_config(
     }
 )
 
-# Configurar tema com cores modernas
+# Configurar tema com cores profissionais
 st.markdown("""
 <style>
-    /* ===== TEMA PRINCIPAL COM CORES MODERNAS ===== */
+    /* ===== TEMA PROFISSIONAL CORPORATIVO ===== */
     :root {
-        --primary-gradient: linear-gradient(135deg, #4361ee 0%, #3a0ca3 100%);
-        --secondary-gradient: linear-gradient(135deg, #4cc9f0 0%, #4361ee 100%);
-        --success-gradient: linear-gradient(135deg, #38b000 0%, #70e000 100%);
-        --warning-gradient: linear-gradient(135deg, #f48c06 0%, #faa307 100%);
-        --danger-gradient: linear-gradient(135deg, #dc2f02 0%, #e85d04 100%);
-        --accent-gradient: linear-gradient(135deg, #7209b7 0%, #9d4edd 100%);
-        --dark-bg: #0a0a0a;
-        --light-bg: #f8f9fa;
-        --card-bg: rgba(255, 255, 255, 0.98);
-        --text-primary: #212529;
-        --text-secondary: #6c757d;
-        --shadow-sm: 0 2px 12px rgba(0,0,0,0.08);
-        --shadow-md: 0 4px 24px rgba(0,0,0,0.12);
-        --shadow-lg: 0 10px 40px rgba(0,0,0,0.15);
-        --radius-sm: 10px;
-        --radius-md: 16px;
-        --radius-lg: 24px;
-        --border-light: 1px solid #dee2e6;
-        --glass-effect: rgba(255, 255, 255, 0.25);
-        --glass-border: rgba(255, 255, 255, 0.18);
+        --primary-blue: #1e3a8a;
+        --primary-blue-dark: #172554;
+        --primary-blue-light: #3b82f6;
+        --secondary-green: #047857;
+        --secondary-green-dark: #065f46;
+        --accent-gold: #d97706;
+        --neutral-dark: #1f2937;
+        --neutral-gray: #6b7280;
+        --neutral-light: #f9fafb;
+        --success: #059669;
+        --warning: #d97706;
+        --error: #dc2626;
+        --card-bg: #ffffff;
+        --sidebar-bg: #1f2937;
+        --border-color: #e5e7eb;
+        --shadow-sm: 0 1px 3px rgba(0,0,0,0.12);
+        --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
+        --shadow-lg: 0 10px 15px rgba(0,0,0,0.1);
+        --radius-sm: 6px;
+        --radius-md: 8px;
+        --radius-lg: 12px;
     }
     
     /* ===== ESTRUTURA PRINCIPAL ===== */
     .main {
-        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        background: #f9fafb;
         min-height: 100vh;
     }
     
-    /* ===== HEADER ELEGANTE ===== */
+    /* ===== HEADER PROFISSIONAL ===== */
     .main-header {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        padding: 3rem;
+        background: linear-gradient(135deg, var(--primary-blue) 0%, var(--primary-blue-dark) 100%);
+        padding: 2.5rem;
         border-radius: var(--radius-lg);
         color: white;
-        margin-bottom: 2.5rem;
+        margin-bottom: 2rem;
         box-shadow: var(--shadow-lg);
-        position: relative;
-        overflow: hidden;
         border: 1px solid rgba(255, 255, 255, 0.1);
     }
     
-    .main-header::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: linear-gradient(45deg, transparent 30%, rgba(255,255,255,0.05) 50%, transparent 70%);
-        animation: shimmer 3s infinite;
+    .main-header h1 {
+        color: white !important;
+        -webkit-text-fill-color: white !important;
+        text-shadow: none !important;
     }
     
-    @keyframes shimmer {
-        0% { transform: translateX(-100%); }
-        100% { transform: translateX(100%); }
-    }
-    
-    /* ===== CARDS DE MÉTRICAS ===== */
+    /* ===== CARDS DE MÉTRICAS PROFISSIONAIS ===== */
     .metric-card {
-        background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 249, 250, 0.95) 100%);
-        padding: 2rem;
+        background: var(--card-bg);
+        padding: 1.75rem;
         border-radius: var(--radius-md);
         box-shadow: var(--shadow-md);
-        border-left: 6px solid #4361ee;
-        transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        border-left: 4px solid var(--primary-blue);
+        transition: all 0.3s ease;
         margin-bottom: 1.25rem;
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.8);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .metric-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: linear-gradient(135deg, rgba(67, 97, 238, 0.03) 0%, rgba(67, 97, 238, 0.01) 100%);
-        z-index: 1;
-    }
-    
-    .metric-card > * {
-        position: relative;
-        z-index: 2;
+        border: 1px solid var(--border-color);
     }
     
     .metric-card:hover {
-        transform: translateY(-8px) scale(1.02);
+        transform: translateY(-2px);
         box-shadow: var(--shadow-lg);
-        border-left-color: #3a0ca3;
+        border-left-color: var(--secondary-green);
     }
     
     .metric-card.success {
-        border-left-color: #38b000;
-        background: linear-gradient(135deg, rgba(56, 176, 0, 0.05) 0%, rgba(255, 255, 255, 0.95) 100%);
-    }
-    
-    .metric-card.success:hover {
-        border-left-color: #70e000;
+        border-left-color: var(--success);
     }
     
     .metric-card.warning {
-        border-left-color: #f48c06;
-        background: linear-gradient(135deg, rgba(244, 140, 6, 0.05) 0%, rgba(255, 255, 255, 0.95) 100%);
-    }
-    
-    .metric-card.warning:hover {
-        border-left-color: #faa307;
+        border-left-color: var(--warning);
     }
     
     .metric-card.danger {
-        border-left-color: #dc2f02;
-        background: linear-gradient(135deg, rgba(220, 47, 2, 0.05) 0%, rgba(255, 255, 255, 0.95) 100%);
-    }
-    
-    .metric-card.danger:hover {
-        border-left-color: #e85d04;
+        border-left-color: var(--error);
     }
     
     .metric-card.info {
-        border-left-color: #7209b7;
-        background: linear-gradient(135deg, rgba(114, 9, 183, 0.05) 0%, rgba(255, 255, 255, 0.95) 100%);
+        border-left-color: var(--primary-blue-light);
     }
     
-    .metric-card.info:hover {
-        border-left-color: #9d4edd;
-    }
-    
-    /* ===== BOTÕES MODERNOS ===== */
+    /* ===== BOTÕES PROFISSIONAIS ===== */
     .stButton > button {
-        background: linear-gradient(135deg, #4361ee 0%, #3a0ca3 100%);
+        background: linear-gradient(135deg, var(--primary-blue) 0%, var(--primary-blue-dark) 100%);
         color: white;
         border: none;
         border-radius: var(--radius-md);
-        padding: 1rem 2rem;
+        padding: 0.75rem 1.5rem;
         font-weight: 600;
-        font-size: 1rem;
-        transition: all 0.3s ease;
+        font-size: 0.95rem;
+        transition: all 0.2s ease;
         width: 100%;
-        position: relative;
-        overflow: hidden;
-        box-shadow: 0 4px 15px rgba(67, 97, 238, 0.3);
     }
     
     .stButton > button:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 25px rgba(67, 97, 238, 0.4);
-        background: linear-gradient(135deg, #3a0ca3 0%, #4361ee 100%);
+        background: linear-gradient(135deg, var(--primary-blue-dark) 0%, var(--primary-blue) 100%);
+        box-shadow: var(--shadow-md);
     }
     
-    .stButton > button:active {
-        transform: translateY(-1px);
-    }
-    
-    /* ===== ABAS ESTILIZADAS ===== */
+    /* ===== ABAS PROFISSIONAIS ===== */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 1rem;
+        gap: 0.5rem;
         background: transparent;
-        padding: 0.5rem;
+        padding: 0.5rem 0.5rem 0 0.5rem;
+        border-bottom: 2px solid var(--border-color);
     }
     
     .stTabs [data-baseweb="tab"] {
-        background: rgba(255, 255, 255, 0.9);
+        background: white;
         border-radius: var(--radius-md) var(--radius-md) 0 0;
-        padding: 1rem 2rem;
-        border: 1px solid rgba(222, 226, 230, 0.5);
+        padding: 0.75rem 1.5rem;
+        border: 1px solid var(--border-color);
+        border-bottom: none;
         font-weight: 600;
-        color: var(--text-secondary);
-        transition: all 0.3s ease;
-        backdrop-filter: blur(10px);
+        color: var(--neutral-gray);
+        transition: all 0.2s ease;
     }
     
     .stTabs [data-baseweb="tab"]:hover {
-        color: var(--text-primary);
-        border-color: #4361ee;
-        background: rgba(67, 97, 238, 0.05);
+        color: var(--primary-blue);
+        background: #f0f7ff;
     }
     
     .stTabs [aria-selected="true"] {
-        background: linear-gradient(135deg, #4361ee 0%, #3a0ca3 100%) !important;
-        color: white !important;
-        border-color: #4361ee !important;
-        box-shadow: var(--shadow-sm);
+        background: white;
+        color: var(--primary-blue) !important;
+        border-color: var(--border-color);
+        border-bottom: 2px solid white !important;
+        margin-bottom: -1px;
+        box-shadow: 0 2px 4px rgba(30, 58, 138, 0.1);
     }
     
-    /* ===== SIDEBAR MODERNA ===== */
+    /* ===== SIDEBAR PROFISSIONAL ===== */
     [data-testid="stSidebar"] {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        background: var(--sidebar-bg);
     }
     
     [data-testid="stSidebar"] .stButton > button {
-        background: linear-gradient(135deg, #4cc9f0 0%, #4361ee 100%);
+        background: linear-gradient(135deg, var(--secondary-green) 0%, var(--secondary-green-dark) 100%);
     }
     
     [data-testid="stSidebar"] .stButton > button:hover {
-        background: linear-gradient(135deg, #4361ee 0%, #4cc9f0 100%);
+        background: linear-gradient(135deg, var(--secondary-green-dark) 0%, var(--secondary-green) 100%);
     }
     
-    /* ===== INPUTS ESTILIZADOS ===== */
+    /* ===== INPUTS PROFISSIONAIS ===== */
     .stNumberInput input, .stTextInput input, .stSelectbox div {
-        background: rgba(255, 255, 255, 0.95) !important;
+        background: white !important;
         border-radius: var(--radius-sm) !important;
-        border: 1px solid #dee2e6 !important;
-        color: var(--text-primary) !important;
-        transition: all 0.3s ease;
+        border: 1px solid var(--border-color) !important;
+        color: var(--neutral-dark) !important;
+        transition: all 0.2s ease;
     }
     
     .stNumberInput input:focus, .stTextInput input:focus {
-        border-color: #4361ee !important;
-        box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1) !important;
+        border-color: var(--primary-blue) !important;
+        box-shadow: 0 0 0 3px rgba(30, 58, 138, 0.1) !important;
     }
     
-    .stSlider [data-baseweb="slider"] {
-        background: rgba(255, 255, 255, 0.95);
-        padding: 1rem;
-        border-radius: var(--radius-md);
-        border: 1px solid #dee2e6;
-    }
-    
-    /* ===== TÍTULOS ===== */
+    /* ===== TÍTULOS PROFISSIONAIS ===== */
     h1 {
-        font-size: 3rem;
-        font-weight: 900;
-        background: linear-gradient(135deg, #4361ee 30%, #4cc9f0 70%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: var(--primary-blue);
         margin-bottom: 0.5rem;
-        text-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
     
     h2 {
-        font-size: 2rem;
-        font-weight: 800;
-        color: #1a1a2e;
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: var(--neutral-dark);
         margin-top: 2rem;
         margin-bottom: 1.5rem;
         padding-bottom: 0.75rem;
-        border-bottom: 3px solid;
-        border-image: linear-gradient(135deg, #4361ee 0%, #4cc9f0 100%) 1;
+        border-bottom: 2px solid var(--border-color);
     }
     
     h3 {
-        font-size: 1.5rem;
-        font-weight: 700;
-        color: #16213e;
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--neutral-dark);
         margin-bottom: 1rem;
-        position: relative;
-        padding-left: 1rem;
     }
     
-    h3::before {
-        content: '';
-        position: absolute;
-        left: 0;
-        top: 0;
-        bottom: 0;
-        width: 4px;
-        background: linear-gradient(135deg, #4361ee 0%, #4cc9f0 100%);
-        border-radius: 2px;
-    }
-    
-    /* ===== CONTAINERS ===== */
+    /* ===== CONTAINERS PROFISSIONAIS ===== */
     .tab-container {
-        background: rgba(255, 255, 255, 0.95);
-        padding: 2.5rem;
-        border-radius: var(--radius-lg);
-        box-shadow: var(--shadow-md);
+        background: white;
+        padding: 2rem;
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-sm);
         margin-top: 1.5rem;
-        border: 1px solid rgba(255, 255, 255, 0.8);
-        backdrop-filter: blur(10px);
-        position: relative;
-        overflow: hidden;
+        border: 1px solid var(--border-color);
     }
     
-    .tab-container::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: linear-gradient(135deg, rgba(67, 97, 238, 0.02) 0%, transparent 100%);
-        pointer-events: none;
-    }
-    
-    /* ===== BADGES ===== */
+    /* ===== BADGES PROFISSIONAIS ===== */
     .badge {
         display: inline-block;
-        padding: 0.35rem 1rem;
-        border-radius: 50px;
-        font-size: 0.8rem;
-        font-weight: 700;
+        padding: 0.25rem 0.75rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.5px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     
     .badge-success {
-        background: linear-gradient(135deg, #38b000 0%, #70e000 100%);
+        background: var(--success);
         color: white;
     }
     
     .badge-warning {
-        background: linear-gradient(135deg, #f48c06 0%, #faa307 100%);
+        background: var(--warning);
         color: white;
     }
     
     .badge-info {
-        background: linear-gradient(135deg, #4361ee 0%, #4cc9f0 100%);
+        background: var(--primary-blue);
         color: white;
     }
     
     .badge-danger {
-        background: linear-gradient(135deg, #dc2f02 0%, #e85d04 100%);
+        background: var(--error);
         color: white;
-    }
-    
-    /* ===== ANIMAÇÕES ===== */
-    @keyframes fadeIn {
-        from { 
-            opacity: 0; 
-            transform: translateY(30px) scale(0.95); 
-        }
-        to { 
-            opacity: 1; 
-            transform: translateY(0) scale(1); 
-        }
-    }
-    
-    .fade-in {
-        animation: fadeIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-    }
-    
-    /* ===== SCROLLBAR PERSONALIZADA ===== */
-    ::-webkit-scrollbar {
-        width: 10px;
-        height: 10px;
-    }
-    
-    ::-webkit-scrollbar-track {
-        background: #f1f3f5;
-        border-radius: 5px;
-    }
-    
-    ::-webkit-scrollbar-thumb {
-        background: linear-gradient(135deg, #4361ee 0%, #3a0ca3 100%);
-        border-radius: 5px;
-    }
-    
-    ::-webkit-scrollbar-thumb:hover {
-        background: linear-gradient(135deg, #3a0ca3 0%, #4361ee 100%);
     }
     
     /* ===== STATUS INDICATORS ===== */
     .status-indicator {
         display: inline-block;
-        width: 12px;
-        height: 12px;
+        width: 8px;
+        height: 8px;
         border-radius: 50%;
-        margin-right: 8px;
-        box-shadow: 0 0 10px currentColor;
+        margin-right: 6px;
     }
     
     .status-active {
-        background: #38b000;
-        box-shadow: 0 0 15px rgba(56, 176, 0, 0.5);
+        background: var(--success);
     }
     
     .status-inactive {
-        background: #dc2f02;
-        box-shadow: 0 0 15px rgba(220, 47, 2, 0.5);
+        background: var(--error);
     }
     
-    /* ===== LOADING SPINNER ===== */
-    .spinner {
-        display: inline-block;
-        width: 50px;
-        height: 50px;
-        border: 4px solid rgba(67, 97, 238, 0.1);
-        border-top: 4px solid #4361ee;
-        border-radius: 50%;
-        animation: spin 1s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite;
+    /* ===== SCROLLBAR PROFISSIONAL ===== */
+    ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
     }
     
-    @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
+    ::-webkit-scrollbar-track {
+        background: #f1f5f9;
+        border-radius: 3px;
     }
     
-    /* ===== PROGRESS BAR ===== */
-    .stProgress > div > div > div {
-        background: linear-gradient(135deg, #4361ee 0%, #3a0ca3 100%) !important;
+    ::-webkit-scrollbar-thumb {
+        background: #94a3b8;
+        border-radius: 3px;
     }
     
-    /* ===== CARDS DE INFORMAÇÃO ===== */
-    .info-card {
-        background: linear-gradient(135deg, rgba(76, 201, 240, 0.1) 0%, rgba(67, 97, 238, 0.1) 100%);
-        border: 1px solid rgba(67, 97, 238, 0.2);
-        border-radius: var(--radius-md);
-        padding: 1.5rem;
-        margin: 1rem 0;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    ::-webkit-scrollbar-thumb:hover {
+        background: #64748b;
     }
     
-    /* ===== ALERTAS ESTILIZADAS ===== */
+    /* ===== ALERTAS PROFISSIONAIS ===== */
     .stAlert {
         border-radius: var(--radius-md) !important;
-        border-left: 6px solid !important;
+        border-left: 4px solid !important;
     }
     
-    div[data-testid="stAlert"] > div {
-        border-radius: var(--radius-md) !important;
+    /* ===== GRÁFICOS PROFISSIONAIS ===== */
+    .plotly-graph-div {
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border-color);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -510,22 +367,22 @@ def formatar_br_dec(numero, decimais=2):
 def criar_metric_card(titulo, valor, subtitulo="", tipo="primary", icon=""):
     """Cria um card de métrica estilizado com ícone opcional"""
     cores = {
-        "primary": "#4361ee",
-        "success": "#38b000",
-        "warning": "#f48c06",
-        "danger": "#dc2f02",
-        "info": "#7209b7"
+        "primary": "#1e3a8a",
+        "success": "#059669",
+        "warning": "#d97706",
+        "danger": "#dc2626",
+        "info": "#3b82f6"
     }
     
-    cor = cores.get(tipo, "#4361ee")
-    icon_html = f'<div style="font-size: 2.5rem; margin-bottom: 0.5rem; color: {cor};">{icon}</div>' if icon else ""
+    cor = cores.get(tipo, "#1e3a8a")
+    icon_html = f'<div style="font-size: 2rem; margin-bottom: 0.5rem; color: {cor};">{icon}</div>' if icon else ""
     
     html = f"""
-    <div class="metric-card {tipo} fade-in">
+    <div class="metric-card {tipo}">
         {icon_html}
-        <div style="font-size: 0.85rem; color: #6c757d; margin-bottom: 0.5rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">{titulo}</div>
-        <div style="font-size: 2.5rem; font-weight: 900; color: #212529; line-height: 1.2; margin: 0.5rem 0; text-shadow: 1px 1px 2px rgba(0,0,0,0.1);">{valor}</div>
-        <div style="font-size: 0.9rem; color: #6c757d; margin-top: 0.5rem; opacity: 0.9; font-weight: 500;">{subtitulo}</div>
+        <div style="font-size: 0.8rem; color: #6b7280; margin-bottom: 0.5rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">{titulo}</div>
+        <div style="font-size: 2rem; font-weight: 700; color: #1f2937; line-height: 1.2; margin: 0.5rem 0;">{valor}</div>
+        <div style="font-size: 0.85rem; color: #6b7280; margin-top: 0.5rem; font-weight: 500;">{subtitulo}</div>
     </div>
     """
     return html
@@ -695,27 +552,22 @@ if 'resultados_continuo' not in st.session_state:
     st.session_state.resultados_continuo = None
 
 # =============================================================================
-# HEADER ELEGANTE
+# HEADER PROFISSIONAL
 # =============================================================================
 
 # Header principal
 st.markdown("""
-<div class="main-header fade-in">
-    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
-        <div style="display: flex; align-items: center; gap: 1.5rem;">
-            <div style="font-size: 4rem; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.2));">🌍</div>
-            <div>
-                <h1 style="margin: 0; font-size: 3rem; font-weight: 900; text-shadow: 0 2px 10px rgba(0,0,0,0.3);">CARBON SIMULATOR PRO</h1>
-                <p style="margin: 0; opacity: 0.9; font-size: 1.2rem; font-weight: 400; max-width: 800px;">
-                    Solução completa para análise de potencial de créditos de carbono via gestão sustentável de resíduos orgânicos
-                </p>
-            </div>
-        </div>
-        <div style="display: flex; gap: 0.5rem;">
-            <span class="badge badge-success">IPCC 2006</span>
-            <span class="badge badge-info">GWP-20</span>
-            <span class="badge badge-warning">Yang et al. 2017</span>
-        </div>
+<div class="main-header">
+    <div style="margin-bottom: 1.5rem;">
+        <h1 style="margin: 0 0 0.5rem 0; color: white;">CARBON SIMULATOR PRO</h1>
+        <p style="margin: 0; opacity: 0.9; font-size: 1.1rem; font-weight: 400; max-width: 800px;">
+            Análise de potencial de créditos de carbono via gestão sustentável de resíduos orgânicos
+        </p>
+    </div>
+    <div style="display: flex; gap: 0.5rem;">
+        <span class="badge badge-success">IPCC 2006</span>
+        <span class="badge badge-info">GWP-20</span>
+        <span class="badge badge-warning">Yang et al. 2017</span>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -724,60 +576,49 @@ st.markdown("""
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.markdown("""
-    <div style="background: linear-gradient(135deg, rgba(67, 97, 238, 0.15) 0%, rgba(58, 12, 163, 0.15) 100%); 
-                padding: 1.5rem; border-radius: 16px; backdrop-filter: blur(10px); 
-                border: 1px solid rgba(67, 97, 238, 0.3); margin-bottom: 1rem;">
-        <div style="font-size: 0.9rem; opacity: 0.9; color: #4361ee; font-weight: 700; letter-spacing: 0.5px;">POTENCIAL DE CRÉDITOS</div>
-        <div style="font-size: 1.75rem; font-weight: 900; color: #1a1a2e; margin-top: 0.5rem;">R$ 50-150/tCO₂eq</div>
+    <div style="background: white; padding: 1.5rem; border-radius: 8px; border: 1px solid #e5e7eb; border-left: 4px solid #1e3a8a; margin-bottom: 1rem;">
+        <div style="font-size: 0.8rem; color: #6b7280; font-weight: 600; letter-spacing: 0.5px;">POTENCIAL DE CRÉDITOS</div>
+        <div style="font-size: 1.5rem; font-weight: 700; color: #1f2937; margin-top: 0.5rem;">R$ 50-150/tCO₂eq</div>
     </div>
     """, unsafe_allow_html=True)
 
 with col2:
     st.markdown("""
-    <div style="background: linear-gradient(135deg, rgba(56, 176, 0, 0.15) 0%, rgba(112, 224, 0, 0.15) 100%); 
-                padding: 1.5rem; border-radius: 16px; backdrop-filter: blur(10px); 
-                border: 1px solid rgba(56, 176, 0, 0.3); margin-bottom: 1rem;">
-        <div style="font-size: 0.9rem; opacity: 0.9; color: #38b000; font-weight: 700; letter-spacing: 0.5px;">REDUÇÃO CH₄</div>
-        <div style="font-size: 1.75rem; font-weight: 900; color: #1a1a2e; margin-top: 0.5rem;">85-95%</div>
+    <div style="background: white; padding: 1.5rem; border-radius: 8px; border: 1px solid #e5e7eb; border-left: 4px solid #059669; margin-bottom: 1rem;">
+        <div style="font-size: 0.8rem; color: #6b7280; font-weight: 600; letter-spacing: 0.5px;">REDUÇÃO CH₄</div>
+        <div style="font-size: 1.5rem; font-weight: 700; color: #1f2937; margin-top: 0.5rem;">85-95%</div>
     </div>
     """, unsafe_allow_html=True)
 
 with col3:
     st.markdown("""
-    <div style="background: linear-gradient(135deg, rgba(244, 140, 6, 0.15) 0%, rgba(250, 163, 7, 0.15) 100%); 
-                padding: 1.5rem; border-radius: 16px; backdrop-filter: blur(10px); 
-                border: 1px solid rgba(244, 140, 6, 0.3); margin-bottom: 1rem;">
-        <div style="font-size: 0.9rem; opacity: 0.9; color: #f48c06; font-weight: 700; letter-spacing: 0.5px;">PAYBACK TÍPICO</div>
-        <div style="font-size: 1.75rem; font-weight: 900; color: #1a1a2e; margin-top: 0.5rem;">3-5 anos</div>
+    <div style="background: white; padding: 1.5rem; border-radius: 8px; border: 1px solid #e5e7eb; border-left: 4px solid #d97706; margin-bottom: 1rem;">
+        <div style="font-size: 0.8rem; color: #6b7280; font-weight: 600; letter-spacing: 0.5px;">PAYBACK TÍPICO</div>
+        <div style="font-size: 1.5rem; font-weight: 700; color: #1f2937; margin-top: 0.5rem;">3-5 anos</div>
     </div>
     """, unsafe_allow_html=True)
 
 with col4:
     st.markdown("""
-    <div style="background: linear-gradient(135deg, rgba(220, 47, 2, 0.15) 0%, rgba(232, 93, 4, 0.15) 100%); 
-                padding: 1.5rem; border-radius: 16px; backdrop-filter: blur(10px); 
-                border: 1px solid rgba(220, 47, 2, 0.3); margin-bottom: 1rem;">
-        <div style="font-size: 0.9rem; opacity: 0.9; color: #dc2f02; font-weight: 700; letter-spacing: 0.5px;">MERCADO GLOBAL</div>
-        <div style="font-size: 1.75rem; font-weight: 900; color: #1a1a2e; margin-top: 0.5rem;">$ 1T+</div>
+    <div style="background: white; padding: 1.5rem; border-radius: 8px; border: 1px solid #e5e7eb; border-left: 4px solid #3b82f6; margin-bottom: 1rem;">
+        <div style="font-size: 0.8rem; color: #6b7280; font-weight: 600; letter-spacing: 0.5px;">MERCADO GLOBAL</div>
+        <div style="font-size: 1.5rem; font-weight: 700; color: #1f2937; margin-top: 0.5rem;">$ 1T+</div>
     </div>
     """, unsafe_allow_html=True)
 
 # =============================================================================
-# BARRA LATERAL MODERNA
+# BARRA LATERAL PROFISSIONAL
 # =============================================================================
 
 with st.sidebar:
     st.markdown("""
-    <div style="padding: 1.5rem; background: rgba(255,255,255,0.05); border-radius: 16px; margin-bottom: 2rem; border: 1px solid rgba(255,255,255,0.1);">
-        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.5rem;">
-            <div style="font-size: 2rem; color: #4cc9f0;">⚙️</div>
-            <h3 style="margin: 0; color: white; font-weight: 700;">CONFIGURAÇÕES GLOBAIS</h3>
-        </div>
+    <div style="padding: 1.5rem; background: rgba(255,255,255,0.05); border-radius: 8px; margin-bottom: 2rem; border: 1px solid rgba(255,255,255,0.1);">
+        <h3 style="margin: 0 0 1rem 0; color: white; font-weight: 600;">CONFIGURAÇÕES GLOBAIS</h3>
     </div>
     """, unsafe_allow_html=True)
     
     # Seção de cotações
-    st.markdown("### 💰 COTAÇÕES EM TEMPO REAL")
+    st.markdown("### COTAÇÕES EM TEMPO REAL")
     
     cotacoes = st.session_state.cotacoes
     preco_carbono = cotacoes.get('preco_carbono', 85.50)
@@ -804,14 +645,14 @@ with st.sidebar:
         )
     
     st.info(f"""
-    **💰 Valor em Reais:** R$ {formatar_br(preco_carbono_brl)}/tCO₂eq
+    **Valor em Reais:** R$ {formatar_br(preco_carbono_brl)}/tCO₂eq
     *Atualizado: {cotacoes.get('timestamp', datetime.now()).strftime('%H:%M')}*
     """, icon="💎")
     
     st.markdown("---")
     
     # Parâmetros ambientais
-    st.markdown("### 🌡️ PARÂMETROS AMBIENTAIS")
+    st.markdown("### PARÂMETROS AMBIENTAIS")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -839,7 +680,7 @@ with st.sidebar:
     st.session_state.parametros_globais['umidade'] = umidade
     
     # Período do GWP
-    st.markdown("### 📊 FATOR GWP")
+    st.markdown("### FATOR GWP")
     gwp_periodo = st.selectbox(
         "Período de Análise GWP",
         options=["20 anos (GWP-20)", "100 anos (GWP-100)"],
@@ -851,7 +692,7 @@ with st.sidebar:
     st.session_state.parametros_globais['gwp_periodo'] = gwp_periodo
     st.session_state.parametros_globais['usar_gwp_20'] = usar_gwp_20
     
-    with st.expander("📚 Sobre os Fatores GWP", expanded=False):
+    with st.expander("Sobre os Fatores GWP", expanded=False):
         st.markdown(f"""
         **GWP-20 (20 anos):** 
         - Metano (CH₄): **{GWP_CH4_20}**
@@ -863,15 +704,15 @@ with st.sidebar:
         
         *Fonte: IPCC AR6 (2021)*
         
-        **💡 Recomendação:** Use GWP-20 para projetos de créditos de carbono, pois reflete melhor o impacto de curto prazo do metano.
+        **Recomendação:** Use GWP-20 para projetos de créditos de carbono, pois reflete melhor o impacto de curto prazo do metano.
         """)
     
     st.markdown("---")
     
     # Ações
-    st.markdown("### ⚡ AÇÕES")
+    st.markdown("### AÇÕES")
     
-    if st.button("🔄 Atualizar Cotações", use_container_width=True, type="secondary"):
+    if st.button("Atualizar Cotações", use_container_width=True, type="secondary"):
         with st.spinner("Atualizando cotações..."):
             preco_carbono, moeda_carbono, fonte_carbono, sucesso_carbono = obter_cotacao_carbono()
             taxa_cambio, sucesso_cambio, fonte_cambio = obter_cotacao_euro()
@@ -885,13 +726,13 @@ with st.sidebar:
                 'preco_carbono_brl': preco_carbono * taxa_cambio,
                 'timestamp': datetime.now()
             }
-            st.success("Cotações atualizadas!", icon="✅")
+            st.success("Cotações atualizadas!")
             st.rerun()
     
     st.markdown("---")
     
     # Informações técnicas
-    st.markdown("### 🔬 INFORMAÇÕES TÉCNICAS")
+    st.markdown("### INFORMAÇÕES TÉCNICAS")
     st.caption(f"""
     **Metodologia:** IPCC 2006 + Yang et al. 2017  
     **Última atualização:** {datetime.now().strftime('%d/%m/%Y')}  
@@ -914,12 +755,12 @@ tab1, tab2, tab3 = st.tabs([
 # =============================================================================
 with tab1:
     # Container principal
-    st.markdown('<div class="tab-container fade-in">', unsafe_allow_html=True)
+    st.markdown('<div class="tab-container">', unsafe_allow_html=True)
     
     # Cabeçalho da aba
     col_header = st.columns([4, 1])
     with col_header[0]:
-        st.markdown("### 📦 Análise de Lote Único")
+        st.markdown("### Análise de Lote Único")
         st.markdown("Calcule o potencial de créditos de carbono para um único lote de resíduos orgânicos puros")
     with col_header[1]:
         st.markdown('<span class="badge badge-info">Simples e Rápido</span>', unsafe_allow_html=True)
@@ -928,7 +769,7 @@ with tab1:
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        st.markdown("#### 📊 Configuração do Lote")
+        st.markdown("#### Configuração do Lote")
         quantidade_lote = st.number_input(
             "Peso do lote de resíduos orgânicos (kg)",
             min_value=10.0,
@@ -947,42 +788,36 @@ with tab1:
         )
     
     with col2:
-        st.markdown("#### ⚙️ Parâmetros Atuais")
+        st.markdown("#### Parâmetros Atuais")
         st.markdown(f"""
-        <div style="background: linear-gradient(135deg, rgba(67, 97, 238, 0.1) 0%, rgba(255, 255, 255, 0.9) 100%); 
-                    padding: 1.5rem; border-radius: 12px; border-left: 5px solid #4361ee; margin-bottom: 1rem;">
-            <div style="color: #4361ee; font-size: 0.9rem; font-weight: 600; letter-spacing: 0.5px;">🌡️ TEMPERATURA</div>
-            <div style="font-size: 1.5rem; font-weight: 800; color: #1a1a2e;">{temperatura}°C</div>
+        <div style="background: white; padding: 1rem; border-radius: 6px; border: 1px solid #e5e7eb; border-left: 4px solid #1e3a8a; margin-bottom: 1rem;">
+            <div style="color: #6b7280; font-size: 0.8rem; font-weight: 600;">TEMPERATURA</div>
+            <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937;">{temperatura}°C</div>
         </div>
-        <div style="background: linear-gradient(135deg, rgba(76, 201, 240, 0.1) 0%, rgba(255, 255, 255, 0.9) 100%); 
-                    padding: 1.5rem; border-radius: 12px; border-left: 5px solid #4cc9f0; margin-bottom: 1rem;">
-            <div style="color: #4cc9f0; font-size: 0.9rem; font-weight: 600; letter-spacing: 0.5px;">💧 UMIDADE</div>
-            <div style="font-size: 1.5rem; font-weight: 800; color: #1a1a2e;">{umidade_valor}%</div>
+        <div style="background: white; padding: 1rem; border-radius: 6px; border: 1px solid #e5e7eb; border-left: 4px solid #3b82f6; margin-bottom: 1rem;">
+            <div style="color: #6b7280; font-size: 0.8rem; font-weight: 600;">UMIDADE</div>
+            <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937;">{umidade_valor}%</div>
         </div>
-        <div style="background: linear-gradient(135deg, rgba(114, 9, 183, 0.1) 0%, rgba(255, 255, 255, 0.9) 100%); 
-                    padding: 1.5rem; border-radius: 12px; border-left: 5px solid #7209b7;">
-            <div style="color: #7209b7; font-size: 0.9rem; font-weight: 600; letter-spacing: 0.5px;">📅 GWP</div>
-            <div style="font-size: 1.5rem; font-weight: 800; color: #1a1a2e;">{gwp_periodo.split('(')[0].strip()}</div>
+        <div style="background: white; padding: 1rem; border-radius: 6px; border: 1px solid #e5e7eb; border-left: 4px solid #059669;">
+            <div style="color: #6b7280; font-size: 0.8rem; font-weight: 600;">GWP</div>
+            <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937;">{gwp_periodo.split('(')[0].strip()}</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col3:
-        st.markdown("#### 📈 Estatísticas")
+        st.markdown("#### Estatísticas")
         st.markdown(f"""
-        <div style="background: linear-gradient(135deg, rgba(244, 140, 6, 0.1) 0%, rgba(255, 255, 255, 0.9) 100%); 
-                    padding: 1.5rem; border-radius: 12px; border-left: 5px solid #f48c06; margin-bottom: 1rem;">
-            <div style="color: #f48c06; font-size: 0.9rem; font-weight: 600; letter-spacing: 0.5px;">📦 LOTE</div>
-            <div style="font-size: 1.5rem; font-weight: 800; color: #1a1a2e;">{formatar_br(quantidade_lote)} kg</div>
+        <div style="background: white; padding: 1rem; border-radius: 6px; border: 1px solid #e5e7eb; border-left: 4px solid #d97706; margin-bottom: 1rem;">
+            <div style="color: #6b7280; font-size: 0.8rem; font-weight: 600;">LOTE</div>
+            <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937;">{formatar_br(quantidade_lote)} kg</div>
         </div>
-        <div style="background: linear-gradient(135deg, rgba(56, 176, 0, 0.1) 0%, rgba(255, 255, 255, 0.9) 100%); 
-                    padding: 1.5rem; border-radius: 12px; border-left: 5px solid #38b000; margin-bottom: 1rem;">
-            <div style="color: #38b000; font-size: 0.9rem; font-weight: 600; letter-spacing: 0.5px;">⏱️ PERÍODO</div>
-            <div style="font-size: 1.5rem; font-weight: 800; color: #1a1a2e;">{anos_analise} anos</div>
+        <div style="background: white; padding: 1rem; border-radius: 6px; border: 1px solid #e5e7eb; border-left: 4px solid #059669; margin-bottom: 1rem;">
+            <div style="color: #6b7280; font-size: 0.8rem; font-weight: 600;">PERÍODO</div>
+            <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937;">{anos_analise} anos</div>
         </div>
-        <div style="background: linear-gradient(135deg, rgba(220, 47, 2, 0.1) 0%, rgba(255, 255, 255, 0.9) 100%); 
-                    padding: 1.5rem; border-radius: 12px; border-left: 5px solid #dc2f02;">
-            <div style="color: #dc2f02; font-size: 0.9rem; font-weight: 600; letter-spacing: 0.5px;">📊 DIAS TOTAIS</div>
-            <div style="font-size: 1.5rem; font-weight: 800; color: #1a1a2e;">{anos_analise * 365}</div>
+        <div style="background: white; padding: 1rem; border-radius: 6px; border: 1px solid #e5e7eb; border-left: 4px solid #dc2626;">
+            <div style="color: #6b7280; font-size: 0.8rem; font-weight: 600;">DIAS TOTAIS</div>
+            <div style="font-size: 1.25rem; font-weight: 700; color: #1f2937;">{anos_analise * 365}</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -990,14 +825,14 @@ with tab1:
     col_btn = st.columns([1, 2, 1])
     with col_btn[1]:
         calcular_lote = st.button(
-            "🚀 CALCULAR POTENCIAL DO LOTE", 
+            "CALCULAR POTENCIAL DO LOTE", 
             type="primary", 
             use_container_width=True,
             key="btn_lote_calc"
         )
     
     if calcular_lote:
-        with st.spinner("🔍 Calculando potencial de créditos..."):
+        with st.spinner("Calculando potencial de créditos..."):
             # Obter parâmetros
             cotacoes = st.session_state.cotacoes
             parametros = st.session_state.parametros_globais
@@ -1032,7 +867,7 @@ with tab1:
             
             col_result_header = st.columns([4, 1])
             with col_result_header[0]:
-                st.markdown("### 📊 Resultados - Lote Único")
+                st.markdown("### Resultados - Lote Único")
             with col_result_header[1]:
                 st.markdown('<span class="badge badge-success">Cálculo Concluído</span>', unsafe_allow_html=True)
             
@@ -1078,7 +913,7 @@ with tab1:
             
             # ==================== VISUALIZAÇÕES ====================
             st.markdown("---")
-            st.markdown("### 📈 Visualizações Detalhadas")
+            st.markdown("### Visualizações Detalhadas")
             
             # Gráfico 1: Comparação de Emissões
             datas = pd.date_range(start=datetime.now(), periods=len(emissoes_aterro), freq='D')
@@ -1094,9 +929,9 @@ with tab1:
                 x=df_emissoes['Data'],
                 y=df_emissoes['Aterro - CH₄ (kg/dia)'],
                 name='Aterro Sanitário',
-                line=dict(color='#dc2f02', width=3),
+                line=dict(color='#dc2626', width=2),
                 fill='tozeroy',
-                fillcolor='rgba(220, 47, 2, 0.1)',
+                fillcolor='rgba(220, 38, 38, 0.1)',
                 hovertemplate='<b>Aterro</b><br>Data: %{x}<br>CH₄: %{y:.3f} kg/dia<extra></extra>'
             ))
             
@@ -1104,33 +939,30 @@ with tab1:
                 x=df_emissoes['Data'],
                 y=df_emissoes['Vermicompostagem - CH₄ (kg/dia)'],
                 name='Vermicompostagem',
-                line=dict(color='#38b000', width=3),
+                line=dict(color='#059669', width=2),
                 fill='tozeroy',
-                fillcolor='rgba(56, 176, 0, 0.1)',
+                fillcolor='rgba(5, 150, 105, 0.1)',
                 hovertemplate='<b>Vermicompostagem</b><br>Data: %{x}<br>CH₄: %{y:.3f} kg/dia<extra></extra>'
             ))
             
             fig1.update_layout(
                 title=dict(
                     text=f'Emissões Diárias de Metano - Lote de {quantidade_lote} kg',
-                    font=dict(size=20, color='#1a1a2e', family='Arial, sans-serif')
+                    font=dict(size=16, color='#1f2937')
                 ),
                 xaxis_title='Data',
                 yaxis_title='kg CH₄ por dia',
                 hovermode='x unified',
-                height=500,
-                plot_bgcolor='rgba(248, 249, 250, 0.9)',
-                paper_bgcolor='rgba(255, 255, 255, 0.95)',
-                font=dict(color='#1a1a2e', family='Arial, sans-serif'),
+                height=450,
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                font=dict(color='#1f2937'),
                 legend=dict(
                     orientation="h",
                     yanchor="bottom",
                     y=1.02,
                     xanchor="right",
-                    x=1,
-                    bgcolor='rgba(255, 255, 255, 0.8)',
-                    bordercolor='#dee2e6',
-                    borderwidth=1
+                    x=1
                 )
             )
             
@@ -1146,9 +978,9 @@ with tab1:
                 x=df_emissoes['Data'],
                 y=df_emissoes['Aterro - Acumulado'],
                 name='Aterro - Acumulado',
-                line=dict(color='#dc2f02', width=4),
+                line=dict(color='#dc2626', width=3),
                 fill='tozeroy',
-                fillcolor='rgba(220, 47, 2, 0.2)',
+                fillcolor='rgba(220, 38, 38, 0.1)',
                 hovertemplate='<b>Aterro Acumulado</b><br>Data: %{x}<br>CH₄ Total: %{y:.2f} kg<extra></extra>'
             ))
             
@@ -1156,44 +988,41 @@ with tab1:
                 x=df_emissoes['Data'],
                 y=df_emissoes['Vermi - Acumulado'],
                 name='Vermicompostagem - Acumulado',
-                line=dict(color='#38b000', width=4),
+                line=dict(color='#059669', width=3),
                 fill='tozeroy',
-                fillcolor='rgba(56, 176, 0, 0.2)',
+                fillcolor='rgba(5, 150, 105, 0.1)',
                 hovertemplate='<b>Vermicompostagem Acumulado</b><br>Data: %{x}<br>CH₄ Total: %{y:.2f} kg<extra></extra>'
             ))
             
             fig2.update_layout(
                 title=dict(
                     text=f'Emissões Acumuladas de Metano - {anos_analise} Anos',
-                    font=dict(size=20, color='#1a1a2e', family='Arial, sans-serif')
+                    font=dict(size=16, color='#1f2937')
                 ),
                 xaxis_title='Data',
                 yaxis_title='kg CH₄ acumulado',
                 hovermode='x unified',
-                height=500,
-                plot_bgcolor='rgba(248, 249, 250, 0.9)',
-                paper_bgcolor='rgba(255, 255, 255, 0.95)',
-                font=dict(color='#1a1a2e', family='Arial, sans-serif'),
+                height=450,
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                font=dict(color='#1f2937'),
                 legend=dict(
                     orientation="h",
                     yanchor="bottom",
                     y=1.02,
                     xanchor="right",
-                    x=1,
-                    bgcolor='rgba(255, 255, 255, 0.8)',
-                    bordercolor='#dee2e6',
-                    borderwidth=1
+                    x=1
                 )
             )
             
             st.plotly_chart(fig2, use_container_width=True)
             
             # ==================== RESUMO DETALHADO ====================
-            with st.expander("📋 RELATÓRIO COMPLETO DA ANÁLISE", expanded=False):
+            with st.expander("RELATÓRIO COMPLETO DA ANÁLISE", expanded=False):
                 st.markdown(f"""
-                ### 🎯 RELATÓRIO DE ANÁLISE - LOTE ÚNICO
+                ### RELATÓRIO DE ANÁLISE - LOTE ÚNICO
                 
-                **📊 DADOS DE ENTRADA**
+                **DADOS DE ENTRADA**
                 - **Peso do lote:** {formatar_br(quantidade_lote)} kg de resíduos orgânicos puros
                 - **Período de análise:** {anos_analise} anos ({anos_analise * 365} dias)
                 - **Umidade:** {formatar_br(umidade_valor)}%
@@ -1201,25 +1030,25 @@ with tab1:
                 - **DOCf calculado:** {formatar_br(docf)} (fórmula IPCC: 0.0147 × T + 0.28)
                 - **Fator GWP utilizado:** {resultados['gwp_utilizado']}
                 
-                **🌿 ANÁLISE DE EMISSÕES**
+                **ANÁLISE DE EMISSÕES**
                 - **Aterro sanitário:** {formatar_br(emissoes_aterro.sum())} kg CH₄ total
                 - **Vermicompostagem:** {formatar_br(emissoes_vermi_completa.sum())} kg CH₄ total
                 - **Redução absoluta:** {formatar_br(resultados['emissoes_evitadas_kg_ch4'])} kg CH₄
                 - **Eficiência de redução:** {formatar_br((1 - emissoes_vermi_completa.sum()/emissoes_aterro.sum())*100)}%
                 
-                **🌍 POTENCIAL DE CRÉDITOS DE CARBONO**
+                **POTENCIAL DE CRÉDITOS DE CARBONO**
                 - **Emissões do aterro:** {formatar_br(resultados['co2eq_aterro_total'])} tCO₂eq
                 - **Emissões da vermicompostagem:** {formatar_br(resultados['co2eq_vermi_total'])} tCO₂eq
                 - **Créditos geráveis:** **{formatar_br(resultados['co2eq_evitado_total'])} tCO₂eq**
                 - **Créditos anuais médios:** {formatar_br(resultados['co2eq_evitado_anual'])} tCO₂eq/ano
                 
-                **💰 VALOR FINANCEIRO**
+                **VALOR FINANCEIRO**
                 - **Preço do carbono (EU ETS):** € {formatar_br(cotacoes.get('preco_carbono', 85.50))}/tCO₂eq
                 - **Taxa de câmbio:** € 1 = R$ {formatar_br(cotacoes.get('taxa_cambio', 5.50))}
                 - **Valor total em créditos:** **R$ {formatar_br(resultados['valor_total_brl'])}**
                 - **Valor por kg de resíduo:** R$ {formatar_br(resultados['valor_total_brl'] / quantidade_lote)}/kg
                 
-                **⚡ IMPACTO AMBIENTAL EQUIVALENTE**
+                **IMPACTO AMBIENTAL EQUIVALENTE**
                 - **Carros equivalentes:** {formatar_br(resultados['co2eq_evitado_total'] / 2.3)} anos de um carro médio
                 - **Árvores equivalentes:** {formatar_br(resultados['co2eq_evitado_total'] * 20)} árvores adultas
                 """)
@@ -1230,22 +1059,22 @@ with tab1:
 # ABA 2: ENTRADA CONTÍNUA (SIMPLIFICADA PARA DEMONSTRAÇÃO)
 # =============================================================================
 with tab2:
-    st.markdown('<div class="tab-container fade-in">', unsafe_allow_html=True)
+    st.markdown('<div class="tab-container">', unsafe_allow_html=True)
     
     col_header = st.columns([4, 1])
     with col_header[0]:
-        st.markdown("### 📈 Análise de Entrada Contínua")
+        st.markdown("### Análise de Entrada Contínua")
         st.markdown("Calcule o potencial de créditos de carbono para processamento diário constante de resíduos")
     with col_header[1]:
         st.markdown('<span class="badge badge-warning">Para Operações Contínuas</span>', unsafe_allow_html=True)
     
-    st.warning("🚧 Esta funcionalidade está em desenvolvimento. Em breve você poderá calcular o potencial para operações contínuas!", icon="⚠️")
+    st.warning("Esta funcionalidade está em desenvolvimento. Em breve você poderá calcular o potencial para operações contínuas!", icon="⚠️")
     
     # Configuração simplificada
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("#### 📊 Configuração do Fluxo")
+        st.markdown("#### Configuração do Fluxo")
         residuos_diarios = st.number_input(
             "Resíduos processados diariamente (kg/dia)",
             min_value=10.0,
@@ -1256,7 +1085,7 @@ with tab2:
         )
     
     with col2:
-        st.markdown("#### ⏱️ Período de Operação")
+        st.markdown("#### Período de Operação")
         anos_operacao = st.select_slider(
             "Período de operação (anos)",
             options=[5, 10, 15, 20, 25, 30],
@@ -1265,8 +1094,8 @@ with tab2:
         )
     
     st.markdown("""
-    <div class="info-card">
-        <h4 style="color: #4361ee; margin-top: 0;">💡 Como funciona a análise contínua</h4>
+    <div style="background: #f0f7ff; padding: 1.5rem; border-radius: 8px; border: 1px solid #dbeafe; margin: 1rem 0;">
+        <h4 style="color: #1e3a8a; margin-top: 0;">Como funciona a análise contínua</h4>
         
         A análise de entrada contínua considera:
         
@@ -1286,29 +1115,28 @@ with tab2:
 # ABA 3: ANÁLISE MUNICIPAL (SIMPLIFICADA PARA DEMONSTRAÇÃO)
 # =============================================================================
 with tab3:
-    st.markdown('<div class="tab-container fade-in">', unsafe_allow_html=True)
+    st.markdown('<div class="tab-container">', unsafe_allow_html=True)
     
     col_header = st.columns([4, 1])
     with col_header[0]:
-        st.markdown("### 🏙️ Análise de Potencial Municipal")
+        st.markdown("### Análise de Potencial Municipal")
         st.markdown("Calcule o potencial agregado de créditos de carbono para municípios brasileiros")
     with col_header[1]:
         st.markdown('<span class="badge badge-danger">Análise em Larga Escala</span>', unsafe_allow_html=True)
     
-    st.warning("🚧 Esta funcionalidade está em desenvolvimento. Em breve você poderá analisar o potencial de múltiplos municípios!", icon="⚠️")
+    st.warning("Esta funcionalidade está em desenvolvimento. Em breve você poderá analisar o potencial de múltiplos municípios!", icon="⚠️")
     
     # Instruções
-    with st.expander("📋 COMO FUNCIONARÁ A ANÁLISE MUNICIPAL", expanded=True):
+    with st.expander("COMO FUNCIONARÁ A ANÁLISE MUNICIPAL", expanded=True):
         st.markdown("""
-        ### 📊 PROCESSO DE ANÁLISE
+        ### PROCESSO DE ANÁLISE
         
         1. **Upload de dados:** Carregue uma planilha Excel com dados municipais
         2. **Cálculo automático:** O sistema calculará o potencial de cada município
         3. **Agregação:** Resultados consolidados por região/estado
         4. **Visualização:** Mapas e gráficos comparativos
-        5. **Exportação:** Relatórios completos em Excel/PDF
         
-        ### 📋 ESTRUTURA DA PLANILHA
+        ### ESTRUTURA DA PLANILHA
         
         Sua planilha deve conter:
         
@@ -1321,7 +1149,7 @@ with tab3:
         | Fração Orgânica | % orgânica no resíduo (0-1) | 0.52 |
         | Taxa de Coleta | % de resíduos coletados (0-1) | 0.95 |
         
-        ### 🎯 BENEFÍCIOS
+        ### BENEFÍCIOS
         
         - **Identificação** de municípios com maior potencial
         - **Priorização** de investimentos
@@ -1332,7 +1160,7 @@ with tab3:
         """)
     
     # Exemplo de dados
-    st.markdown("### 📊 EXEMPLO DE DADOS MUNICIPAIS")
+    st.markdown("### EXEMPLO DE DADOS MUNICIPAIS")
     
     dados_exemplo = {
         "Município": ["São Paulo", "Rio de Janeiro", "Belo Horizonte", "Salvador", "Fortaleza"],
@@ -1358,10 +1186,9 @@ col1, col2, col3 = st.columns(3)
 
 with col1:
     st.markdown("""
-    <div style="background: linear-gradient(135deg, rgba(67, 97, 238, 0.05) 0%, transparent 100%); 
-                padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(67, 97, 238, 0.1);">
-        <div style="color: #4361ee; font-weight: 700; margin-bottom: 0.5rem;">📊 METODOLOGIA CIENTÍFICA</div>
-        <div style="color: #6c757d; font-size: 0.9rem;">
+    <div style="background: white; padding: 1.5rem; border-radius: 8px; border: 1px solid #e5e7eb;">
+        <div style="color: #1e3a8a; font-weight: 600; margin-bottom: 0.5rem;">METODOLOGIA CIENTÍFICA</div>
+        <div style="color: #6b7280; font-size: 0.85rem;">
             IPCC 2006 (Aterro) + Yang et al. 2017 (Compostagem)<br>
             GWP-20: CH₄ = 82.5 | N₂O = 273<br>
             GWP-100: CH₄ = 29.8 | N₂O = 273
@@ -1372,10 +1199,9 @@ with col1:
 with col2:
     cotacoes = st.session_state.cotacoes
     st.markdown(f"""
-    <div style="background: linear-gradient(135deg, rgba(76, 201, 240, 0.05) 0%, transparent 100%); 
-                padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(76, 201, 240, 0.1);">
-        <div style="color: #4cc9f0; font-weight: 700; margin-bottom: 0.5rem;">💰 MERCADO DE CARBONO</div>
-        <div style="color: #6c757d; font-size: 0.9rem;">
+    <div style="background: white; padding: 1.5rem; border-radius: 8px; border: 1px solid #e5e7eb;">
+        <div style="color: #1e3a8a; font-weight: 600; margin-bottom: 0.5rem;">MERCADO DE CARBONO</div>
+        <div style="color: #6b7280; font-size: 0.85rem;">
             Preço atual: € {formatar_br(cotacoes.get('preco_carbono', 85.50))}/tCO₂eq<br>
             Taxa EUR/BRL: R$ {formatar_br(cotacoes.get('taxa_cambio', 5.50))}<br>
             Valor BR: R$ {formatar_br(cotacoes.get('preco_carbono_brl', 85.50 * 5.50))}/tCO₂eq
@@ -1385,10 +1211,9 @@ with col2:
 
 with col3:
     st.markdown("""
-    <div style="background: linear-gradient(135deg, rgba(56, 176, 0, 0.05) 0%, transparent 100%); 
-                padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(56, 176, 0, 0.1);">
-        <div style="color: #38b000; font-weight: 700; margin-bottom: 0.5rem;">⚡ PERFORMANCE TÉCNICA</div>
-        <div style="color: #6c757d; font-size: 0.9rem;">
+    <div style="background: white; padding: 1.5rem; border-radius: 8px; border: 1px solid #e5e7eb;">
+        <div style="color: #1e3a8a; font-weight: 600; margin-bottom: 0.5rem;">PERFORMANCE TÉCNICA</div>
+        <div style="color: #6b7280; font-size: 0.85rem;">
             Cálculos otimizados em NumPy/SciPy<br>
             Interface responsiva e moderna<br>
             Atualização em tempo real
@@ -1400,14 +1225,14 @@ st.markdown("---")
 
 # Créditos
 st.markdown(f"""
-<div style="text-align: center; color: #6c757d; font-size: 0.9rem; padding: 1.5rem 0;">
-    <div style="margin-bottom: 0.5rem; font-weight: 700; color: #4361ee; font-size: 1.1rem;">
-        🌿 CARBON SIMULATOR PRO
+<div style="text-align: center; color: #6b7280; font-size: 0.85rem; padding: 1.5rem 0;">
+    <div style="margin-bottom: 0.5rem; font-weight: 600; color: #1e3a8a; font-size: 1rem;">
+        CARBON SIMULATOR PRO
     </div>
-    <div style="margin-bottom: 1rem; color: #6c757d;">
+    <div style="margin-bottom: 1rem; color: #6b7280;">
         Solução completa para créditos de carbono via gestão de resíduos
     </div>
-    <div style="font-size: 0.8rem; color: #adb5bd;">
+    <div style="font-size: 0.75rem; color: #9ca3af;">
         © 2024 Carbon Simulator Pro | Versão 2.0.0 | Desenvolvido para transição climática justa<br>
         Última atualização: {datetime.now().strftime("%d/%m/%Y %H:%M:%S")} | 
         <span class="status-indicator status-active"></span> Sistema Operacional
