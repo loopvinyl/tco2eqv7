@@ -12,19 +12,25 @@ st.set_page_config(
 )
 
 # =========================================================
-# FORMATAÇÃO BRASILEIRA
+# FORMATAÇÃO BRASILEIRA CORRIGIDA
 # =========================================================
 def formatar_br(valor, casas=2):
     try:
         v = float(valor)
-        s = f"{v:,.{casas}f}"
-        return s.replace(",", "X").replace(".", ",").replace("X", ".")
+        # Formata com separador de milhares (ponto) e decimal (vírgula)
+        return f"{v:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except:
         return "Não informado"
 
 def formatar_massa(valor):
     try:
-        return f"{formatar_br(valor,2)} t"
+        return f"{formatar_br(valor, 0)} t"
+    except:
+        return "Não informado"
+
+def formatar_monetario(valor, simbolo="R$", casas=2):
+    try:
+        return f"{simbolo} {formatar_br(valor, casas)}"
     except:
         return "Não informado"
 
@@ -72,7 +78,7 @@ def obter_cotacao_euro_real():
         return 5.50, False
 
 # =========================================================
-# INICIALIZAÇÃO SEGURA DO SESSION STATE (CORREÇÃO DO ERRO)
+# INICIALIZAÇÃO SEGURA DO SESSION STATE
 # =========================================================
 if "preco_carbono" not in st.session_state:
     preco, moeda, fonte = obter_cotacao_carbono()
@@ -142,8 +148,8 @@ dist = (
 dist["Percentual (%)"] = dist["MASSA_FLOAT"] / massa_total_podas * 100
 dist = dist.sort_values("Percentual (%)", ascending=False)
 
-dist["Massa (t)"] = dist["MASSA_FLOAT"].apply(lambda x: formatar_br(x,2))
-dist["Percentual (%)"] = dist["Percentual (%)"].apply(lambda x: formatar_br(x,2))
+dist["Massa (t)"] = dist["MASSA_FLOAT"].apply(lambda x: formatar_br(x, 0))
+dist["Percentual (%)"] = dist["Percentual (%)"].apply(lambda x: formatar_br(x, 2))
 
 st.dataframe(
     dist[[COL_DESTINO, "Massa (t)", "Percentual (%)"]],
@@ -170,8 +176,8 @@ co2eq_aterro = ch4_gerado * GWP_CH4
 
 st.subheader("🔥 Potencial de geração de metano (CH₄) – Aterro Sanitário")
 st.metric("Massa no aterro", formatar_massa(massa_aterro))
-st.metric("CH₄ potencial", f"{formatar_br(ch4_gerado)} t CH₄")
-st.metric("Emissões", f"{formatar_br(co2eq_aterro)} tCO₂eq")
+st.metric("CH₄ potencial", f"{formatar_br(ch4_gerado, 2)} t CH₄")
+st.metric("Emissões", f"{formatar_br(co2eq_aterro, 2)} tCO₂eq")
 
 # =========================================================
 # EMISSÕES EVITADAS
@@ -182,13 +188,13 @@ RED_VERMI = 0.95
 evitado_comp = co2eq_aterro * RED_COMP
 evitado_vermi = co2eq_aterro * RED_VERMI
 
-st.subheader("♻️ Emissões Evitadas pelo Desvio do Aterro")
+st.subheader("♻️ Emissões Evitadas pelo Desvio do Ateriro")
 
 c1, c2 = st.columns(2)
 with c1:
-    st.metric("Compostagem", f"{formatar_br(evitado_comp)} tCO₂eq")
+    st.metric("Compostagem", f"{formatar_br(evitado_comp, 2)} tCO₂eq")
 with c2:
-    st.metric("Vermicompostagem", f"{formatar_br(evitado_vermi)} tCO₂eq")
+    st.metric("Vermicompostagem", f"{formatar_br(evitado_vermi, 2)} tCO₂eq")
 
 # =========================================================
 # CONVERSÃO DE tCO2eq PARA € E R$
@@ -200,23 +206,23 @@ tab1, tab2 = st.tabs(["💰 Mercado de Carbono", "💱 Câmbio"])
 with tab1:
     st.metric(
         "Preço do Carbono (tCO₂eq)",
-        f"{st.session_state['moeda_carbono']} {formatar_br(st.session_state['preco_carbono'])}",
+        f"{st.session_state['moeda_carbono']} {formatar_br(st.session_state['preco_carbono'], 2)}",
         help=f"Fonte: {st.session_state['fonte_carbono']}"
     )
 
 with tab2:
     st.metric(
         "Euro (EUR → BRL)",
-        f"R$ {formatar_br(st.session_state['eur_brl'])}"
+        f"R$ {formatar_br(st.session_state['eur_brl'], 2)}"
     )
 
 st.markdown(
     f"**Preço do carbono em Reais:** R$ "
-    f"{formatar_br(st.session_state['preco_carbono'] * st.session_state['eur_brl'])} / tCO₂eq"
+    f"{formatar_br(st.session_state['preco_carbono'] * st.session_state['eur_brl'], 2)} / tCO₂eq"
 )
 
 # =========================================================
-# VALORAÇÃO ECONÔMICA – 20 ANOS
+# VALORAÇÃO ECONÔMICA – 20 ANOS (CORRIGIDO)
 # =========================================================
 st.subheader("💰 Valor Econômico das Emissões Evitadas (20 anos)")
 
@@ -224,18 +230,46 @@ anos = 20
 preco = st.session_state["preco_carbono"]
 eurbrl = st.session_state["eur_brl"]
 
-for nome, valor in {
-    "Compostagem": evitado_comp,
-    "Vermicompostagem": evitado_vermi
-}.items():
-    total = valor * anos
-    valor_eur = total * preco
-    valor_brl = valor_eur * eurbrl
+# Criar um layout organizado com colunas
+col1, col2 = st.columns(2)
 
-    st.markdown(f"### {nome}")
-    st.markdown(f"- **tCO₂eq evitado (20 anos):** {formatar_br(total)}")
-    st.markdown(f"- **Valor econômico (€):** € {formatar_br(valor_eur)}")
-    st.markdown(f"- **Valor econômico (R$):** R$ {formatar_br(valor_brl)}")
+with col1:
+    st.markdown("### 🍃 Compostagem")
+    
+    total_comp = evitado_comp * anos
+    valor_eur_comp = total_comp * preco
+    valor_brl_comp = valor_eur_comp * eurbrl
+    
+    st.markdown(f"**tCO₂eq evitado (20 anos):** {formatar_br(total_comp, 2)}")
+    st.markdown(f"**Valor econômico (€):** € {formatar_br(valor_eur_comp, 2)}")
+    st.markdown(f"**Valor econômico (R$):** R$ {formatar_br(valor_brl_comp, 2)}")
+
+with col2:
+    st.markdown("### 🐛 Vermicompostagem")
+    
+    total_vermi = evitado_vermi * anos
+    valor_eur_vermi = total_vermi * preco
+    valor_brl_vermi = valor_eur_vermi * eurbrl
+    
+    st.markdown(f"**tCO₂eq evitado (20 anos):** {formatar_br(total_vermi, 2)}")
+    st.markdown(f"**Valor econômico (€):** € {formatar_br(valor_eur_vermi, 2)}")
+    st.markdown(f"**Valor econômico (R$):** R$ {formatar_br(valor_brl_vermi, 2)}")
+
+# =========================================================
+# RESUMO DOS VALORES
+# =========================================================
+st.subheader("📊 Resumo Comparativo")
+
+resumo_data = {
+    "Tecnologia": ["Compostagem", "Vermicompostagem"],
+    "tCO₂eq/ano": [formatar_br(evitado_comp, 2), formatar_br(evitado_vermi, 2)],
+    "tCO₂eq/20 anos": [formatar_br(total_comp, 2), formatar_br(total_vermi, 2)],
+    "Valor (€)": [formatar_br(valor_eur_comp, 2), formatar_br(valor_eur_vermi, 2)],
+    "Valor (R$)": [formatar_br(valor_brl_comp, 2), formatar_br(valor_brl_vermi, 2)]
+}
+
+resumo_df = pd.DataFrame(resumo_data)
+st.dataframe(resumo_df, use_container_width=True)
 
 # =========================================================
 # RODAPÉ
