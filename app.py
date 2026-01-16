@@ -23,14 +23,11 @@ de resíduos sólidos urbanos.
 def formatar_numero_br(valor, casas_decimais=2):
     if pd.isna(valor) or valor is None:
         return "Não informado"
-    try:
-        num = float(valor)
-        formato = f"{{:,.{casas_decimais}f}}".format(num)
-        partes = formato.split(".")
-        milhar = partes[0].replace(",", "X").replace(".", ",").replace("X", ".")
-        return f"{milhar},{partes[1]}"
-    except:
-        return "Não informado"
+    num = float(valor)
+    formato = f"{{:,.{casas_decimais}f}}".format(num)
+    partes = formato.split(".")
+    milhar = partes[0].replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{milhar},{partes[1]}"
 
 def formatar_massa_br(valor):
     if pd.isna(valor) or valor is None:
@@ -45,14 +42,12 @@ def normalizar_texto(txt):
     return txt.upper().strip()
 
 # =========================================================
-# Funções de emissões de CH4 (script técnico anexo)
+# Funções de emissão de CH₄ (Yang et al.)
 # =========================================================
 def ch4_compostagem_total(massa_kg):
-    # Yang et al. (2017) – compostagem termofílica
     return massa_kg * 0.0004  # kg CH4 / kg resíduo
 
 def ch4_vermicompostagem_total(massa_kg):
-    # Yang et al. (2017) – vermicompostagem
     return massa_kg * 0.00015  # kg CH4 / kg resíduo
 
 # =========================================================
@@ -155,7 +150,10 @@ st.dataframe(pd.DataFrame(resultados), use_container_width=True)
 st.markdown("---")
 st.subheader("🌳 Destinação das podas e galhadas de áreas verdes públicas")
 
-df_podas = df_mun[df_mun[COL_TIPO_COLETA].astype(str).str.contains("áreas verdes públicas", case=False, na=False)].copy()
+df_podas = df_mun[
+    df_mun[COL_TIPO_COLETA].astype(str)
+    .str.contains("áreas verdes públicas", case=False, na=False)
+].copy()
 
 if not df_podas.empty:
     df_podas["MASSA_FLOAT"] = pd.to_numeric(df_podas[COL_MASSA], errors="coerce").fillna(0)
@@ -176,7 +174,7 @@ if not df_podas.empty:
     # =========================================================
     # 🔥 Metano – Aterro vs Tratamento Biológico
     # =========================================================
-    st.subheader("🔥 Potencial de geração de metano (CH₄) – Aterro Sanitário")
+    st.subheader("🔥 Metano (CH₄): Aterro × Tratamentos Biológicos")
 
     massa_aterro_t = df_podas_destino.loc[
         df_podas_destino[COL_DESTINO].apply(normalizar_texto) == "ATERRO SANITARIO",
@@ -184,118 +182,39 @@ if not df_podas.empty:
     ].sum()
 
     if massa_aterro_t > 0:
-        # IPCC 2006
         DOC, MCF, F, OX, Ri = 0.15, 1.0, 0.5, 0.1, 0.0
         DOCf = 0.0147 * 25 + 0.28
 
         massa_kg = massa_aterro_t * 1000
-        ch4_aterro_t = massa_kg * DOC * DOCf * MCF * F * (16 / 12) * (1 - Ri) * (1 - OX) / 1000
+
+        ch4_aterro_t = (
+            massa_kg * DOC * DOCf * MCF * F * (16 / 12) * (1 - Ri) * (1 - OX)
+        ) / 1000
 
         ch4_comp_t = ch4_compostagem_total(massa_kg) / 1000
         ch4_vermi_t = ch4_vermicompostagem_total(massa_kg) / 1000
 
-        ch4_evitado_t = ch4_aterro_t - ch4_comp_t - ch4_vermi_t
+        evitado_comp_t = ch4_aterro_t - ch4_comp_t
+        evitado_vermi_t = ch4_aterro_t - ch4_vermi_t
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Massa no aterro", f"{formatar_numero_br(massa_aterro_t)} t")
+            st.metric("CH₄ no aterro", f"{formatar_numero_br(ch4_aterro_t)} t")
         with col2:
-            st.metric("CH₄ potencial gerado (aterro)", f"{formatar_numero_br(ch4_aterro_t)} t CH₄")
+            st.metric("Emissões evitadas (Compostagem)", f"{formatar_numero_br(evitado_comp_t)} t CH₄")
         with col3:
-            st.metric("Emissões evitadas (CH₄)", f"{formatar_numero_br(ch4_evitado_t)} t CH₄")
+            st.metric("Emissões evitadas (Vermicompostagem)", f"{formatar_numero_br(evitado_vermi_t)} t CH₄")
+
+        # Gráfico
+        df_graf = pd.DataFrame({
+            "Cenário": ["Aterro", "Compostagem", "Vermicompostagem"],
+            "Emissões de CH₄ (t)": [ch4_aterro_t, ch4_comp_t, ch4_vermi_t]
+        }).set_index("Cenário")
+
+        st.bar_chart(df_graf, use_container_width=True)
 
         st.caption(
-            "Emissões evitadas calculadas como: CH₄(aterro) − CH₄(compostagem) − CH₄(vermicompostagem). "
-            "Base metodológica: IPCC 2006 e Yang et al. (2017)."
+            "Emissões evitadas calculadas comparando o cenário de aterro sanitário "
+            "com compostagem e vermicompostagem. "
+            "Metodologia: IPCC 2006 e Yang et al. (2017). Apenas CH₄."
         )
-    else:
-        st.info("Não há massa de podas e galhadas destinada a aterro sanitário.")
-
-# =========================================================
-# Rodapé
-# =========================================================
-st.markdown("---")
-st.caption("Fonte: SNIS – Sistema Nacional de Informações sobre Saneamento")
-
-
-# =========================================================
-# 🔥 Metano – Aterro vs Tratamento Biológico
-# =========================================================
-st.subheader("🔥 Potencial de geração de metano (CH₄) – Aterro Sanitário")
-
-massa_aterro_t = df_podas_destino.loc[
-    df_podas_destino[COL_DESTINO].apply(normalizar_texto) == "ATERRO SANITARIO",
-    "MASSA_FLOAT"
-].sum()
-
-if massa_aterro_t > 0:
-    # IPCC 2006 – Aterro
-    DOC, MCF, F, OX, Ri = 0.15, 1.0, 0.5, 0.1, 0.0
-    DOCf = 0.0147 * 25 + 0.28
-
-    massa_kg = massa_aterro_t * 1000
-
-    ch4_aterro_t = (
-        massa_kg * DOC * DOCf * MCF * F * (16 / 12) * (1 - Ri) * (1 - OX)
-    ) / 1000
-
-    # Compostagem e vermicompostagem (Yang et al.)
-    ch4_comp_t = ch4_compostagem_total(massa_kg) / 1000
-    ch4_vermi_t = ch4_vermicompostagem_total(massa_kg) / 1000
-
-    # Emissões evitadas
-    evitado_comp_t = ch4_aterro_t - ch4_comp_t
-    evitado_vermi_t = ch4_aterro_t - ch4_vermi_t
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Massa no aterro", f"{formatar_numero_br(massa_aterro_t)} t")
-    with col2:
-        st.metric("CH₄ potencial no aterro", f"{formatar_numero_br(ch4_aterro_t)} t CH₄")
-    with col3:
-        st.metric("Emissões evitadas (máx.)", f"{formatar_numero_br(evitado_vermi_t)} t CH₄")
-
-    st.markdown("### 🌱 Emissões Evitadas por Tipo de Tratamento")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric(
-            "Compostagem",
-            f"{formatar_numero_br(evitado_comp_t)} t CH₄"
-        )
-    with col2:
-        st.metric(
-            "Vermicompostagem",
-            f"{formatar_numero_br(evitado_vermi_t)} t CH₄"
-        )
-
-    # =========================================================
-    # 📊 Gráfico comparativo
-    # =========================================================
-    df_grafico = pd.DataFrame({
-        "Cenário": [
-            "Aterro Sanitário",
-            "Compostagem",
-            "Vermicompostagem"
-        ],
-        "Emissões de CH₄ (t)": [
-            ch4_aterro_t,
-            ch4_comp_t,
-            ch4_vermi_t
-        ]
-    })
-
-    st.bar_chart(
-        df_grafico.set_index("Cenário"),
-        use_container_width=True
-    )
-
-    st.caption(
-        "Emissões evitadas calculadas comparando o cenário de aterro sanitário "
-        "com os tratamentos biológicos. "
-        "Metodologia: IPCC 2006 (aterro) e Yang et al. (2017) para compostagem "
-        "e vermicompostagem. Apenas CH₄ considerado."
-    )
-
-else:
-    st.info("Não há massa de podas e galhadas destinada a aterro sanitário.")
