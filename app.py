@@ -42,15 +42,13 @@ def normalizar_texto(txt):
     return txt.upper().strip()
 
 # =========================================================
-# Fatores de emissão (literatura)
+# Funções de emissão de CH₄ (Yang et al.)
 # =========================================================
 def ch4_compostagem_total(massa_kg):
-    return massa_kg * 0.0004  # Yang et al.
+    return massa_kg * 0.0004  # kg CH4 / kg resíduo
 
 def ch4_vermicompostagem_total(massa_kg):
-    return massa_kg * 0.00015  # Yang et al.
-
-GWP_CH4 = 27.2  # AR6 – 100 anos
+    return massa_kg * 0.00015  # kg CH4 / kg resíduo
 
 # =========================================================
 # Carga do Excel
@@ -147,7 +145,7 @@ for _, row in df_mun.iterrows():
 st.dataframe(pd.DataFrame(resultados), use_container_width=True)
 
 # =========================================================
-# 🌳 Podas e galhadas – Destinação
+# 🌳 Destinação das podas e galhadas
 # =========================================================
 st.markdown("---")
 st.subheader("🌳 Destinação das podas e galhadas de áreas verdes públicas")
@@ -161,31 +159,22 @@ if not df_podas.empty:
     df_podas["MASSA_FLOAT"] = pd.to_numeric(df_podas[COL_MASSA], errors="coerce").fillna(0)
     total_podas = df_podas["MASSA_FLOAT"].sum()
 
-    df_podas_destino = (
-        df_podas.groupby(COL_DESTINO)["MASSA_FLOAT"]
-        .sum()
-        .reset_index()
-    )
-
+    df_podas_destino = df_podas.groupby(COL_DESTINO)["MASSA_FLOAT"].sum().reset_index()
     df_podas_destino["Percentual (%)"] = df_podas_destino["MASSA_FLOAT"] / total_podas * 100
     df_podas_destino = df_podas_destino.sort_values("Percentual (%)", ascending=False)
 
     st.metric("Massa total de podas e galhadas", f"{formatar_numero_br(total_podas)} t")
 
-    st.dataframe(
-        df_podas_destino.assign(
-            **{
-                "Massa (t)": df_podas_destino["MASSA_FLOAT"].apply(formatar_numero_br),
-                "Percentual (%)": df_podas_destino["Percentual (%)"].apply(formatar_numero_br)
-            }
-        )[[COL_DESTINO, "Massa (t)", "Percentual (%)"]],
-        use_container_width=True
-    )
+    df_view = df_podas_destino.copy()
+    df_view["Massa (t)"] = df_view["MASSA_FLOAT"].apply(formatar_numero_br)
+    df_view["Percentual (%)"] = df_view["Percentual (%)"].apply(formatar_numero_br)
+
+    st.dataframe(df_view[[COL_DESTINO, "Massa (t)", "Percentual (%)"]], use_container_width=True)
 
     # =========================================================
-    # 🔥 Emissões evitadas – tCO₂eq
+    # 🔥 Metano – Aterro vs Tratamento Biológico
     # =========================================================
-    st.subheader("🔥 Emissões evitadas por desvio do aterro (tCO₂eq)")
+    st.subheader("🔥 Metano (CH₄): Aterro × Tratamentos Biológicos")
 
     massa_aterro_t = df_podas_destino.loc[
         df_podas_destino[COL_DESTINO].apply(normalizar_texto) == "ATERRO SANITARIO",
@@ -198,50 +187,61 @@ if not df_podas.empty:
 
         massa_kg = massa_aterro_t * 1000
 
-        ch4_aterro = (
+        ch4_aterro_t = (
             massa_kg * DOC * DOCf * MCF * F * (16 / 12) * (1 - Ri) * (1 - OX)
         ) / 1000
 
-        ch4_comp = ch4_compostagem_total(massa_kg) / 1000
-        ch4_vermi = ch4_vermicompostagem_total(massa_kg) / 1000
+        ch4_comp_t = ch4_compostagem_total(massa_kg) / 1000
+        ch4_vermi_t = ch4_vermicompostagem_total(massa_kg) / 1000
 
-        evitado_comp_co2eq = (ch4_aterro - ch4_comp) * GWP_CH4
-        evitado_vermi_co2eq = (ch4_aterro - ch4_vermi) * GWP_CH4
+        evitado_comp_t = ch4_aterro_t - ch4_comp_t
+        evitado_vermi_t = ch4_aterro_t - ch4_vermi_t
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Compostagem", f"{formatar_numero_br(evitado_comp_co2eq)} tCO₂eq")
+            st.metric("CH₄ no aterro", f"{formatar_numero_br(ch4_aterro_t)} t")
         with col2:
-            st.metric("Vermicompostagem", f"{formatar_numero_br(evitado_vermi_co2eq)} tCO₂eq")
+            st.metric("Emissões evitadas (Compostagem)", f"{formatar_numero_br(evitado_comp_t)} t CH₄")
+        with col3:
+            st.metric("Emissões evitadas (Vermicompostagem)", f"{formatar_numero_br(evitado_vermi_t)} t CH₄")
+
+        # Gráfico comparativo
+        df_graf = pd.DataFrame({
+            "Cenário": ["Aterro", "Compostagem", "Vermicompostagem"],
+            "Emissões de CH₄ (t)": [ch4_aterro_t, ch4_comp_t, ch4_vermi_t]
+        }).set_index("Cenário")
+
+        st.bar_chart(df_graf, use_container_width=True)
 
         # =========================================================
         # 💰 Valoração econômica – 20 anos
         # =========================================================
-        st.markdown("### 💰 Valoração econômica das emissões evitadas (20 anos)")
+        st.markdown("### 💰 Valoração econômica das emissões evitadas (CH₄)")
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            preco = st.number_input("Preço do carbono (US$/tCO₂eq)", value=50.0)
+            preco_ch4_usd = st.number_input("Preço do CH₄ (US$/t)", value=1500.0, step=50.0)
         with col2:
-            usd_brl = st.number_input("US$ → R$", value=5.0)
+            cot_usd_brl = st.number_input("Cotação US$ → R$", value=5.0, step=0.05)
         with col3:
-            usd_eur = st.number_input("US$ → €", value=0.92)
+            cot_usd_eur = st.number_input("Cotação US$ → €", value=0.92, step=0.01)
 
         anos = 20
 
-        comp_20a = evitado_comp_co2eq * anos
-        vermi_20a = evitado_vermi_co2eq * anos
+        comp_20a = evitado_comp_t * anos
+        vermi_20a = evitado_vermi_t * anos
 
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("Compostagem – 20 anos (R$)", f"R$ {formatar_numero_br(comp_20a * preco * usd_brl)}")
-            st.metric("Compostagem – 20 anos (€)", f"€ {formatar_numero_br(comp_20a * preco * usd_eur)}")
+            st.metric("Compostagem – 20 anos", f"{formatar_numero_br(comp_20a)} t CH₄")
+            st.metric("Valor (R$)", f"R$ {formatar_numero_br(comp_20a * preco_ch4_usd * cot_usd_brl)}")
+            st.metric("Valor (€)", f"€ {formatar_numero_br(comp_20a * preco_ch4_usd * cot_usd_eur)}")
         with col2:
-            st.metric("Vermicompostagem – 20 anos (R$)", f"R$ {formatar_numero_br(vermi_20a * preco * usd_brl)}")
-            st.metric("Vermicompostagem – 20 anos (€)", f"€ {formatar_numero_br(vermi_20a * preco * usd_eur)}")
+            st.metric("Vermicompostagem – 20 anos", f"{formatar_numero_br(vermi_20a)} t CH₄")
+            st.metric("Valor (R$)", f"R$ {formatar_numero_br(vermi_20a * preco_ch4_usd * cot_usd_brl)}")
+            st.metric("Valor (€)", f"€ {formatar_numero_br(vermi_20a * preco_ch4_usd * cot_usd_eur)}")
 
         st.caption(
-            "Emissões evitadas calculadas em tCO₂eq (AR6 – GWP CH₄ = 27,2), "
-            "a partir do desvio de podas e galhadas do aterro sanitário "
-            "para compostagem e vermicompostagem."
+            "Valoração baseada nas emissões evitadas de CH₄ em horizonte de 20 anos. "
+            "Preço e câmbio configuráveis. Metodologia IPCC 2006 + Yang et al. (2017)."
         )
