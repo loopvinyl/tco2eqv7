@@ -210,9 +210,10 @@ with tab2:
         f"R$ {formatar_br(st.session_state['eur_brl'])}"
     )
 
-# CORREÇÃO AQUI: Mantendo o formato original mas sem quebras
-preco_brl = st.session_state['preco_carbono'] * st.session_state['eur_brl']
-st.markdown(f"**Preço do carbono em Reais:** R$ {formatar_br(preco_brl)} / tCO₂eq")
+st.markdown(
+    f"**Preço do carbono em Reais:** R$ "
+    f"{formatar_br(st.session_state['preco_carbono'] * st.session_state['eur_brl'])} / tCO₂eq"
+)
 
 # =========================================================
 # VALORAÇÃO ECONÔMICA – 20 ANOS
