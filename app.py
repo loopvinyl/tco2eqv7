@@ -186,12 +186,12 @@ if not df_podas.empty:
 # =========================================================
 st.subheader("🔥 Emissões evitadas por desvio do aterro (tCO₂eq)")
 
-GWP_CH4 = 27.2  # AR6 – 100 anos
-
-# Parâmetros econômicos automáticos (modelo técnico)
-PRECO_CARBONO_USD = 50.0     # US$/tCO2eq
-USD_BRL = 5.00               # câmbio médio
-USD_EUR = 0.92               # câmbio médio
+# -------------------------------
+# Parâmetros do MODELO V8
+# -------------------------------
+GWP_CH4 = 27.2                # AR6 – 100 anos
+PRECO_CARBONO_EUR = 90.0      # €/tCO2eq (modelo V8)
+EUR_BRL = 5.40                # cotação média €
 ANOS = 20
 
 massa_aterro_t = df_podas_destino.loc[
@@ -205,57 +205,73 @@ if massa_aterro_t > 0:
 
     massa_kg = massa_aterro_t * 1000
 
+    # -------------------------------
     # CH₄ no aterro (IPCC 2006)
+    # -------------------------------
     ch4_aterro = (
-        massa_kg * DOC * DOCf * MCF * F * (16 / 12) * (1 - Ri) * (1 - OX)
+        massa_kg * DOC * DOCf * MCF * F * (16 / 12)
+        * (1 - Ri) * (1 - OX)
     ) / 1000
 
+    # -------------------------------
     # CH₄ nos tratamentos biológicos
+    # -------------------------------
     ch4_comp = ch4_compostagem_total(massa_kg) / 1000
     ch4_vermi = ch4_vermicompostagem_total(massa_kg) / 1000
 
+    # -------------------------------
     # Emissões evitadas (tCO₂eq)
+    # -------------------------------
     evitado_comp_co2eq = (ch4_aterro - ch4_comp) * GWP_CH4
     evitado_vermi_co2eq = (ch4_aterro - ch4_vermi) * GWP_CH4
 
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("Compostagem", f"{formatar_numero_br(evitado_comp_co2eq)} tCO₂eq")
+        st.metric(
+            "Emissões evitadas – Compostagem",
+            f"{formatar_numero_br(evitado_comp_co2eq)} tCO₂eq"
+        )
     with col2:
-        st.metric("Vermicompostagem", f"{formatar_numero_br(evitado_vermi_co2eq)} tCO₂eq")
+        st.metric(
+            "Emissões evitadas – Vermicompostagem",
+            f"{formatar_numero_br(evitado_vermi_co2eq)} tCO₂eq"
+        )
 
     # =========================================================
-    # 💰 Valoração econômica automática – 20 anos
+    # 💰 Valoração econômica – MODELO V8 (20 anos)
     # =========================================================
-    st.markdown("### 💰 Valoração econômica das emissões evitadas (20 anos)")
+    st.markdown("### 💰 Valoração econômica das emissões evitadas")
     st.caption(
-        f"Preço automático do carbono: **US$ {PRECO_CARBONO_USD}/tCO₂eq** | "
-        f"GWP CH₄ = 27,2 (AR6)"
+        f"Preço automático do carbono: **€ {PRECO_CARBONO_EUR}/tCO₂eq** | "
+        f"GWP CH₄ = 27,2 (AR6) | Horizonte: {ANOS} anos"
     )
 
+    # Projeção temporal
     comp_20a = evitado_comp_co2eq * ANOS
     vermi_20a = evitado_vermi_co2eq * ANOS
 
-    valor_comp_usd = comp_20a * PRECO_CARBONO_USD
-    valor_vermi_usd = vermi_20a * PRECO_CARBONO_USD
+    # Valoração econômica (MODELO V8)
+    valor_comp_eur = comp_20a * PRECO_CARBONO_EUR
+    valor_vermi_eur = vermi_20a * PRECO_CARBONO_EUR
+
+    valor_comp_brl = valor_comp_eur * EUR_BRL
+    valor_vermi_brl = valor_vermi_eur * EUR_BRL
 
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**🌱 Compostagem**")
         st.metric("tCO₂eq evitado (20 anos)", formatar_numero_br(comp_20a))
-        st.metric("Valor econômico (R$)", f"R$ {formatar_numero_br(valor_comp_usd * USD_BRL)}")
-        st.metric("Valor econômico (€)", f"€ {formatar_numero_br(valor_comp_usd * USD_EUR)}")
+        st.metric("Valor econômico (€)", f"€ {formatar_numero_br(valor_comp_eur)}")
+        st.metric("Valor econômico (R$)", f"R$ {formatar_numero_br(valor_comp_brl)}")
 
     with col2:
         st.markdown("**🐛 Vermicompostagem**")
         st.metric("tCO₂eq evitado (20 anos)", formatar_numero_br(vermi_20a))
-        st.metric("Valor econômico (R$)", f"R$ {formatar_numero_br(valor_vermi_usd * USD_BRL)}")
-        st.metric("Valor econômico (€)", f"€ {formatar_numero_br(valor_vermi_usd * USD_EUR)}")
+        st.metric("Valor econômico (€)", f"€ {formatar_numero_br(valor_vermi_eur)}")
+        st.metric("Valor econômico (R$)", f"R$ {formatar_numero_br(valor_vermi_brl)}")
 
     st.caption(
-        "Valoração econômica automática baseada em preço fixo de carbono, "
-        "conversão direta de tCO₂eq e horizonte de 20 anos. "
-        "Aplicável a estudos técnicos, políticas públicas e projetos de mitigação."
+        "Cálculo de emissões evitadas e valoração econômica realizado "
+        "conforme o MODELO V8: desvio do aterro sanitário para compostagem "
+        "e vermicompostagem de podas e galhadas de áreas verdes públicas."
     )
-
-    
