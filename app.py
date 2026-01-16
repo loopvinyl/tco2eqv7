@@ -12,26 +12,22 @@ st.set_page_config(
 st.title("🌱 Potencial de Compostagem e Vermicompostagem por Município")
 st.markdown("""
 Este aplicativo interpreta os **tipos de coleta executada** informados pelos municípios
-e avalia o **potencial técnico para compostagem e vermicompostagem** de resíduos sólidos urbanos,
-com base nos dados do SNIS.
+e avalia o **potencial técnico para compostagem e vermicompostagem**
+de resíduos sólidos urbanos.
 """)
 
 # =========================================================
-# Carregamento dos dados (CORRETO)
+# Carregamento do Excel (configuração conhecida)
 # =========================================================
 @st.cache_data
 def load_data():
     url = "https://raw.githubusercontent.com/loopvinyl/tco2eqv7/main/rsuBrasil.xlsx"
-
     df = pd.read_excel(
         url,
         sheet_name="Manejo_Coleta_e_Destinação",
         header=13
     )
-
-    # Remove linhas totalmente vazias
     df = df.dropna(how="all")
-
     return df
 
 df = load_data()
@@ -42,10 +38,12 @@ df = load_data()
 COL_MUNICIPIO = "MUNICÍPIO"
 COL_TIPO_COLETA = "Tipo de coleta executada"
 
-# Validação simples e clara
+# =========================================================
+# Validação
+# =========================================================
 if COL_MUNICIPIO not in df.columns or COL_TIPO_COLETA not in df.columns:
-    st.error("❌ As colunas esperadas não foram encontradas no arquivo.")
-    st.markdown("### Colunas disponíveis:")
+    st.error("❌ As colunas esperadas não foram encontradas.")
+    st.write("Colunas disponíveis:")
     st.write(df.columns.tolist())
     st.stop()
 
@@ -58,26 +56,22 @@ def classificar_coleta(texto):
 
     t = str(texto).lower()
 
-    # Orgânico direto
     if "poda" in t or "galhada" in t or "área verde" in t:
-        return ("Orgânico direto", True, True, "Resíduo vegetal limpo, excelente para compostagem")
+        return ("Orgânico direto", True, True, "Resíduo vegetal limpo")
 
     if "orgânico" in t and "seletiva" in t:
         return ("Orgânico direto", True, True, "Orgânico segregado na origem")
 
-    # Orgânico potencial
     if "indiferenciada" in t or "convencional" in t or "domiciliar" in t:
-        return ("Orgânico potencial", True, False, "Contém orgânicos, mas exige triagem")
+        return ("Orgânico potencial", True, False, "Exige triagem prévia")
 
-    # Inapto
     if "limpeza urbana" in t or "varrição" in t:
         return ("Inapto", False, False, "Alta contaminação")
 
-    # Não orgânico
     if "seletiva" in t and ("recicl" in t or "seco" in t):
         return ("Não orgânico", False, False, "Resíduos recicláveis secos")
 
-    return ("Indefinido", False, False, "Tipo não reconhecido automaticamente")
+    return ("Indefinido", False, False, "Tipo não classificado automaticamente")
 
 # =========================================================
 # Interface
@@ -92,14 +86,14 @@ st.subheader(f"📍 {municipio}")
 resultados = []
 
 for _, row in df_mun.iterrows():
-    categoria, comp, vermi, just = classificar_coleta(row[COL_TIPO_COLETA])
+    categoria, comp, vermi, justificativa = classificar_coleta(row[COL_TIPO_COLETA])
 
     resultados.append({
         "Tipo de coleta executada": row[COL_TIPO_COLETA],
         "Categoria técnica": categoria,
         "Compostagem": "✅" if comp else "❌",
         "Vermicompostagem": "✅" if vermi else "❌",
-        "Justificativa técnica": just
+        "Justificativa técnica": justificativa
     })
 
 df_result = pd.DataFrame(resultados)
@@ -107,22 +101,25 @@ df_result = pd.DataFrame(resultados)
 st.dataframe(df_result, use_container_width=True)
 
 # =========================================================
-# Síntese técnica municipal
+# Síntese municipal
 # =========================================================
-st.subheader("📊 Síntese técnica")
+st.subheader("📊 Síntese técnica municipal")
 
 if (df_result["Compostagem"] == "✅").any():
-    st.success("✔️ O município apresenta **potencial técnico para compostagem**.")
+    st.success("✔️ O município possui **potencial técnico para compostagem**.")
 else:
     st.error("❌ Não foi identificado potencial técnico para compostagem.")
 
 if (df_result["Vermicompostagem"] == "✅").any():
-    st.success("🐛 O município apresenta **potencial técnico para vermicompostagem**.")
+    st.success("🐛 O município possui **potencial técnico para vermicompostagem**.")
 else:
     st.warning("⚠️ Não foram identificadas fontes adequadas para vermicompostagem.")
 
+# =========================================================
+# Rodapé
+# =========================================================
 st.markdown("---")
 st.caption(
     "Classificação baseada na origem do resíduo, grau de segregação "
-    "e adequação ao tratamento biológico (compostagem e vermicompostagem)."
+    "e adequação ao tratamento biológico (compostagem/vermicompostagem)."
 )
