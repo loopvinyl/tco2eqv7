@@ -205,7 +205,7 @@ if not df_podas.empty:
         with col3:
             st.metric("Emissões evitadas (Vermicompostagem)", f"{formatar_numero_br(evitado_vermi_t)} t CH₄")
 
-        # Gráfico
+        # Gráfico comparativo
         df_graf = pd.DataFrame({
             "Cenário": ["Aterro", "Compostagem", "Vermicompostagem"],
             "Emissões de CH₄ (t)": [ch4_aterro_t, ch4_comp_t, ch4_vermi_t]
@@ -213,8 +213,35 @@ if not df_podas.empty:
 
         st.bar_chart(df_graf, use_container_width=True)
 
+        # =========================================================
+        # 💰 Valoração econômica – 20 anos
+        # =========================================================
+        st.markdown("### 💰 Valoração econômica das emissões evitadas (CH₄)")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            preco_ch4_usd = st.number_input("Preço do CH₄ (US$/t)", value=1500.0, step=50.0)
+        with col2:
+            cot_usd_brl = st.number_input("Cotação US$ → R$", value=5.0, step=0.05)
+        with col3:
+            cot_usd_eur = st.number_input("Cotação US$ → €", value=0.92, step=0.01)
+
+        anos = 20
+
+        comp_20a = evitado_comp_t * anos
+        vermi_20a = evitado_vermi_t * anos
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Compostagem – 20 anos", f"{formatar_numero_br(comp_20a)} t CH₄")
+            st.metric("Valor (R$)", f"R$ {formatar_numero_br(comp_20a * preco_ch4_usd * cot_usd_brl)}")
+            st.metric("Valor (€)", f"€ {formatar_numero_br(comp_20a * preco_ch4_usd * cot_usd_eur)}")
+        with col2:
+            st.metric("Vermicompostagem – 20 anos", f"{formatar_numero_br(vermi_20a)} t CH₄")
+            st.metric("Valor (R$)", f"R$ {formatar_numero_br(vermi_20a * preco_ch4_usd * cot_usd_brl)}")
+            st.metric("Valor (€)", f"€ {formatar_numero_br(vermi_20a * preco_ch4_usd * cot_usd_eur)}")
+
         st.caption(
-            "Emissões evitadas calculadas comparando o cenário de aterro sanitário "
-            "com compostagem e vermicompostagem. "
-            "Metodologia: IPCC 2006 e Yang et al. (2017). Apenas CH₄."
+            "Valoração baseada nas emissões evitadas de CH₄ em horizonte de 20 anos. "
+            "Preço e câmbio configuráveis. Metodologia IPCC 2006 + Yang et al. (2017)."
         )
