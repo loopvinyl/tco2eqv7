@@ -1,247 +1,88 @@
-import streamlit as st
-import pandas as pd
-import unicodedata
+# =========================================================
+# 💰 Valoração econômica das emissões evitadas (20 anos)
+# =========================================================
+st.markdown("### 💰 Valoração econômica das emissões evitadas (CH₄)")
 
-# =========================================================
-# Configuração da página
-# =========================================================
-st.set_page_config(
-    page_title="Potencial de Compostagem de RSU",
-    layout="wide"
+st.markdown(
+    "Estimativa econômica baseada nas **emissões evitadas de metano (CH₄)** "
+    "ao longo de **20 anos**, com cálculo da média anual."
 )
 
-st.title("🌱 Potencial de Compostagem e Vermicompostagem por Município")
-st.markdown("""
-Este aplicativo interpreta os **tipos de coleta executada** informados pelos municípios
-e avalia o **potencial técnico para compostagem e vermicompostagem**
-de resíduos sólidos urbanos.
-""")
+# -------------------------------
+# Parâmetros econômicos (editáveis)
+# -------------------------------
+col1, col2, col3 = st.columns(3)
 
-# =========================================================
-# Funções auxiliares
-# =========================================================
-def formatar_numero_br(valor, casas_decimais=2):
-    if pd.isna(valor) or valor is None:
-        return "Não informado"
-    num = float(valor)
-    formato = f"{{:,.{casas_decimais}f}}".format(num)
-    partes = formato.split(".")
-    milhar = partes[0].replace(",", "X").replace(".", ",").replace("X", ".")
-    return f"{milhar},{partes[1]}"
-
-def formatar_massa_br(valor):
-    if pd.isna(valor) or valor is None:
-        return "Não informado"
-    return f"{formatar_numero_br(valor)} t"
-
-def normalizar_texto(txt):
-    if pd.isna(txt):
-        return ""
-    txt = unicodedata.normalize("NFKD", str(txt))
-    txt = txt.encode("ASCII", "ignore").decode("utf-8")
-    return txt.upper().strip()
-
-# =========================================================
-# Funções de emissão de CH₄ (Yang et al.)
-# =========================================================
-def ch4_compostagem_total(massa_kg):
-    return massa_kg * 0.0004  # kg CH4 / kg resíduo
-
-def ch4_vermicompostagem_total(massa_kg):
-    return massa_kg * 0.00015  # kg CH4 / kg resíduo
-
-# =========================================================
-# Carga do Excel
-# =========================================================
-@st.cache_data
-def load_data():
-    url = "https://raw.githubusercontent.com/loopvinyl/tco2eqv7/main/rsuBrasil.xlsx"
-    df = pd.read_excel(
-        url,
-        sheet_name="Manejo_Coleta_e_Destinação",
-        header=13
+with col1:
+    preco_ch4_usd = st.number_input(
+        "Preço do CH₄ (US$ / t)",
+        min_value=0.0,
+        value=1500.0,
+        step=50.0
     )
-    df = df.dropna(how="all")
-    df.columns = [str(col).strip() for col in df.columns]
-    return df
 
-df = load_data()
+with col2:
+    cotacao_usd_brl = st.number_input(
+        "Cotação US$ → R$",
+        min_value=0.0,
+        value=5.00,
+        step=0.05
+    )
 
-# =========================================================
-# Definição de colunas
-# =========================================================
-df = df.rename(columns={
-    df.columns[2]: "MUNICÍPIO",
-    df.columns[17]: "TIPO_COLETA_EXECUTADA",
-    df.columns[24]: "MASSA_COLETADA"
-})
+with col3:
+    cotacao_usd_eur = st.number_input(
+        "Cotação US$ → €",
+        min_value=0.0,
+        value=0.92,
+        step=0.01
+    )
 
-COL_MUNICIPIO = "MUNICÍPIO"
-COL_TIPO_COLETA = "TIPO_COLETA_EXECUTADA"
-COL_MASSA = "MASSA_COLETADA"
-COL_DESTINO = df.columns[28]  # Coluna AC
+# -------------------------------
+# Cálculos temporais
+# -------------------------------
+anos = 20
 
-# =========================================================
-# Classificação técnica
-# =========================================================
-def classificar_coleta(texto):
-    if pd.isna(texto):
-        return ("Não informado", False, False, "Tipo não informado")
+evitado_comp_20a = evitado_comp_t * anos
+evitado_vermi_20a = evitado_vermi_t * anos
 
-    t = str(texto).lower()
-    palavras = {
-        "poda": ("Orgânico direto", True, True, "Resíduo vegetal limpo"),
-        "galhada": ("Orgânico direto", True, True, "Resíduo vegetal limpo"),
-        "verde": ("Orgânico direto", True, True, "Resíduo vegetal limpo"),
-        "orgânica": ("Orgânico direto", True, True, "Orgânico segregado"),
-        "domiciliar": ("Orgânico potencial", True, False, "Exige triagem"),
-        "varrição": ("Inapto", False, False, "Alta contaminação"),
-        "seletiva": ("Não orgânico", False, False, "Recicláveis")
-    }
-    for p, c in palavras.items():
-        if p in t:
-            return c
-    return ("Indefinido", False, False, "Não classificado")
+media_comp_anual = evitado_comp_20a / anos
+media_vermi_anual = evitado_vermi_20a / anos
 
-# =========================================================
-# Limpeza
-# =========================================================
-df_clean = df.dropna(subset=[COL_MUNICIPIO])
-df_clean[COL_MUNICIPIO] = df_clean[COL_MUNICIPIO].astype(str).str.strip()
+# -------------------------------
+# Valoração econômica
+# -------------------------------
+valor_comp_usd = evitado_comp_20a * preco_ch4_usd
+valor_vermi_usd = evitado_vermi_20a * preco_ch4_usd
 
-# =========================================================
-# Interface
-# =========================================================
-municipios = ["BRASIL – Todos os municípios"] + sorted(df_clean[COL_MUNICIPIO].unique())
-municipio = st.selectbox("Selecione o município:", municipios)
+valor_comp_brl = valor_comp_usd * cotacao_usd_brl
+valor_vermi_brl = valor_vermi_usd * cotacao_usd_brl
 
-df_mun = df_clean.copy() if municipio == municipios[0] else df_clean[df_clean[COL_MUNICIPIO] == municipio]
-st.subheader("🇧🇷 Brasil — Síntese Nacional de RSU" if municipio == municipios[0] else f"📍 {municipio}")
+valor_comp_eur = valor_comp_usd * cotacao_usd_eur
+valor_vermi_eur = valor_vermi_usd * cotacao_usd_eur
 
-# =========================================================
-# Tabela principal
-# =========================================================
-resultados = []
-total_massa = massa_compostagem = massa_vermi = 0
+# -------------------------------
+# Exibição dos resultados
+# -------------------------------
+st.markdown("#### 📊 Resultados – Horizonte de 20 anos")
 
-for _, row in df_mun.iterrows():
-    categoria, comp, vermi, just = classificar_coleta(row[COL_TIPO_COLETA])
-    massa = pd.to_numeric(row[COL_MASSA], errors="coerce") or 0
-    total_massa += massa
-    if comp:
-        massa_compostagem += massa
-    if vermi:
-        massa_vermi += massa
+col1, col2 = st.columns(2)
 
-    resultados.append({
-        "Tipo de coleta": row[COL_TIPO_COLETA],
-        "Massa": formatar_massa_br(massa),
-        "Categoria": categoria,
-        "Compostagem": "✅" if comp else "❌",
-        "Vermicompostagem": "✅" if vermi else "❌",
-        "Justificativa": just
-    })
+with col1:
+    st.markdown("**🌱 Compostagem**")
+    st.metric("CH₄ evitado (20 anos)", f"{formatar_numero_br(evitado_comp_20a)} t")
+    st.metric("Média anual", f"{formatar_numero_br(media_comp_anual)} t/ano")
+    st.metric("Valor estimado (R$)", f"R$ {formatar_numero_br(valor_comp_brl)}")
+    st.metric("Valor estimado (€)", f"€ {formatar_numero_br(valor_comp_eur)}")
 
-st.dataframe(pd.DataFrame(resultados), use_container_width=True)
+with col2:
+    st.markdown("**🐛 Vermicompostagem**")
+    st.metric("CH₄ evitado (20 anos)", f"{formatar_numero_br(evitado_vermi_20a)} t")
+    st.metric("Média anual", f"{formatar_numero_br(media_vermi_anual)} t/ano")
+    st.metric("Valor estimado (R$)", f"R$ {formatar_numero_br(valor_vermi_brl)}")
+    st.metric("Valor estimado (€)", f"€ {formatar_numero_br(valor_vermi_eur)}")
 
-# =========================================================
-# 🌳 Destinação das podas e galhadas
-# =========================================================
-st.markdown("---")
-st.subheader("🌳 Destinação das podas e galhadas de áreas verdes públicas")
-
-df_podas = df_mun[
-    df_mun[COL_TIPO_COLETA].astype(str)
-    .str.contains("áreas verdes públicas", case=False, na=False)
-].copy()
-
-if not df_podas.empty:
-    df_podas["MASSA_FLOAT"] = pd.to_numeric(df_podas[COL_MASSA], errors="coerce").fillna(0)
-    total_podas = df_podas["MASSA_FLOAT"].sum()
-
-    df_podas_destino = df_podas.groupby(COL_DESTINO)["MASSA_FLOAT"].sum().reset_index()
-    df_podas_destino["Percentual (%)"] = df_podas_destino["MASSA_FLOAT"] / total_podas * 100
-    df_podas_destino = df_podas_destino.sort_values("Percentual (%)", ascending=False)
-
-    st.metric("Massa total de podas e galhadas", f"{formatar_numero_br(total_podas)} t")
-
-    df_view = df_podas_destino.copy()
-    df_view["Massa (t)"] = df_view["MASSA_FLOAT"].apply(formatar_numero_br)
-    df_view["Percentual (%)"] = df_view["Percentual (%)"].apply(formatar_numero_br)
-
-    st.dataframe(df_view[[COL_DESTINO, "Massa (t)", "Percentual (%)"]], use_container_width=True)
-
-    # =========================================================
-    # 🔥 Metano – Aterro vs Tratamento Biológico
-    # =========================================================
-    st.subheader("🔥 Metano (CH₄): Aterro × Tratamentos Biológicos")
-
-    massa_aterro_t = df_podas_destino.loc[
-        df_podas_destino[COL_DESTINO].apply(normalizar_texto) == "ATERRO SANITARIO",
-        "MASSA_FLOAT"
-    ].sum()
-
-    if massa_aterro_t > 0:
-        DOC, MCF, F, OX, Ri = 0.15, 1.0, 0.5, 0.1, 0.0
-        DOCf = 0.0147 * 25 + 0.28
-
-        massa_kg = massa_aterro_t * 1000
-
-        ch4_aterro_t = (
-            massa_kg * DOC * DOCf * MCF * F * (16 / 12) * (1 - Ri) * (1 - OX)
-        ) / 1000
-
-        ch4_comp_t = ch4_compostagem_total(massa_kg) / 1000
-        ch4_vermi_t = ch4_vermicompostagem_total(massa_kg) / 1000
-
-        evitado_comp_t = ch4_aterro_t - ch4_comp_t
-        evitado_vermi_t = ch4_aterro_t - ch4_vermi_t
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("CH₄ no aterro", f"{formatar_numero_br(ch4_aterro_t)} t")
-        with col2:
-            st.metric("Emissões evitadas (Compostagem)", f"{formatar_numero_br(evitado_comp_t)} t CH₄")
-        with col3:
-            st.metric("Emissões evitadas (Vermicompostagem)", f"{formatar_numero_br(evitado_vermi_t)} t CH₄")
-
-        # Gráfico comparativo
-        df_graf = pd.DataFrame({
-            "Cenário": ["Aterro", "Compostagem", "Vermicompostagem"],
-            "Emissões de CH₄ (t)": [ch4_aterro_t, ch4_comp_t, ch4_vermi_t]
-        }).set_index("Cenário")
-
-        st.bar_chart(df_graf, use_container_width=True)
-
-        # =========================================================
-        # 💰 Valoração econômica – 20 anos
-        # =========================================================
-        st.markdown("### 💰 Valoração econômica das emissões evitadas (CH₄)")
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            preco_ch4_usd = st.number_input("Preço do CH₄ (US$/t)", value=1500.0, step=50.0)
-        with col2:
-            cot_usd_brl = st.number_input("Cotação US$ → R$", value=5.0, step=0.05)
-        with col3:
-            cot_usd_eur = st.number_input("Cotação US$ → €", value=0.92, step=0.01)
-
-        anos = 20
-
-        comp_20a = evitado_comp_t * anos
-        vermi_20a = evitado_vermi_t * anos
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Compostagem – 20 anos", f"{formatar_numero_br(comp_20a)} t CH₄")
-            st.metric("Valor (R$)", f"R$ {formatar_numero_br(comp_20a * preco_ch4_usd * cot_usd_brl)}")
-            st.metric("Valor (€)", f"€ {formatar_numero_br(comp_20a * preco_ch4_usd * cot_usd_eur)}")
-        with col2:
-            st.metric("Vermicompostagem – 20 anos", f"{formatar_numero_br(vermi_20a)} t CH₄")
-            st.metric("Valor (R$)", f"R$ {formatar_numero_br(vermi_20a * preco_ch4_usd * cot_usd_brl)}")
-            st.metric("Valor (€)", f"€ {formatar_numero_br(vermi_20a * preco_ch4_usd * cot_usd_eur)}")
-
-        st.caption(
-            "Valoração baseada nas emissões evitadas de CH₄ em horizonte de 20 anos. "
-            "Preço e câmbio configuráveis. Metodologia IPCC 2006 + Yang et al. (2017)."
-        )
+st.caption(
+    "Valoração econômica estimada a partir das emissões evitadas de CH₄, "
+    "considerando horizonte de 20 anos e preço configurável por tonelada de metano. "
+    "Cotações monetárias ajustáveis pelo usuário."
+)
