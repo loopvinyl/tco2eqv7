@@ -13,15 +13,14 @@ st.set_page_config(
 st.title("🌱 Potencial de Compostagem e Vermicompostagem por Município")
 st.markdown("""
 Este aplicativo interpreta os **tipos de coleta executada** informados pelos municípios
-e avalia o **potencial técnico para compostagem e vermicompostagem**
-de resíduos sólidos urbanos com base no impacto climático de **20 anos (GWP20)**.
+e avalia o **potencial técnico e climático** de resíduos sólidos urbanos.
 """)
 
 # =========================================================
-# Constantes Técnicas (Baseadas no Script Anexo - AR6 IPCC)
+# Constantes Técnicas (Baseadas no Script Modelo - AR6 IPCC)
 # =========================================================
-GWP_CH4_20 = 79.7  # Potencial de Aquecimento Global do Metano em 20 anos
-GWP_N2O_20 = 273.0 # Potencial de Aquecimento Global do Óxido Nitroso em 20 anos
+GWP_CH4_20 = 79.7  # Potencial de Aquecimento Global do Metano (20 anos)
+ANOS_SIMULACAO = 20 # Horizonte temporal padrão do modelo
 
 # =========================================================
 # Funções auxiliares
@@ -122,7 +121,7 @@ df_clean[COL_MUNICIPIO] = df_clean[COL_MUNICIPIO].astype(str).str.strip()
 # Interface
 # =========================================================
 municipios = ["BRASIL – Todos os municípios"] + sorted(df_clean[COL_MUNICIPIO].unique())
-municipio = st.selectbox("Selecione o municipio:", municipios)
+municipio = st.selectbox("Selecione o município:", municipios)
 
 df_mun = df_clean.copy() if municipio == municipios[0] else df_clean[df_clean[COL_MUNICIPIO] == municipio]
 st.subheader("🇧🇷 Brasil — Síntese Nacional de RSU" if municipio == municipios[0] else f"📍 {municipio}")
@@ -131,12 +130,9 @@ st.subheader("🇧🇷 Brasil — Síntese Nacional de RSU" if municipio == muni
 # Tabela principal
 # =========================================================
 resultados = []
-total_massa = 0
-
 for _, row in df_mun.iterrows():
     categoria, comp, vermi, just = classificar_coleta(row[COL_TIPO_COLETA])
     massa = pd.to_numeric(row[COL_MASSA], errors="coerce") or 0
-    total_massa += massa
 
     resultados.append({
         "Tipo de coleta": row[COL_TIPO_COLETA],
@@ -150,17 +146,18 @@ for _, row in df_mun.iterrows():
 st.dataframe(pd.DataFrame(resultados), use_container_width=True)
 
 # =========================================================
-# 🌳 Destinação das podas e galhadas
+# 🌳 Destinação e Impacto Climático
 # =========================================================
 st.markdown("---")
-st.subheader("🌳 Impacto Climático (20 anos) das podas e galhadas")
+st.subheader("🌳 Destinação das podas e galhadas de áreas verdes")
 
 df_podas = df_mun[df_mun[COL_TIPO_COLETA].astype(str).str.contains("áreas verdes públicas", case=False, na=False)].copy()
 
 if not df_podas.empty:
     df_podas["MASSA_FLOAT"] = pd.to_numeric(df_podas[COL_MASSA], errors="coerce").fillna(0)
     total_podas = df_podas["MASSA_FLOAT"].sum()
-
+    
+    # Agrupamento por destino
     df_podas_destino = df_podas.groupby(COL_DESTINO)["MASSA_FLOAT"].sum().reset_index()
     
     massa_aterro_t = df_podas_destino.loc[
@@ -169,50 +166,47 @@ if not df_podas.empty:
     ].sum()
 
     if massa_aterro_t > 0:
-        # --- CÁLCULO ATERRO (IPCC 2006) ---
+        # --- CÁLCULO BASEADO NO MODELO DE 20 ANOS ---
+        # Parâmetros IPCC 2006 simplificados para Horizonte de 20 anos
         DOC, MCF, F, OX, Ri = 0.15, 1.0, 0.5, 0.1, 0.0
-        DOCf = 0.0147 * 20 + 0.28  # Ajustado para o horizonte de 20 anos conforme lógica do anexo
+        DOCf = 0.0147 * ANOS_SIMULACAO + 0.28 
         massa_kg = massa_aterro_t * 1000
         
-        # Emissão de Metano em toneladas
-        ch4_aterro_t = massa_kg * DOC * DOCf * MCF * F * (16 / 12) * (1 - Ri) * (1 - OX) / 1000
-        # Conversão para CO2eq usando GWP20 (79.7)
-        co2eq_aterro_t = ch4_aterro_t * GWP_CH4_20
+        # 1. Emissões no Aterro (Total acumulado e Média Anual)
+        ch4_aterro_t = (massa_kg * DOC * DOCf * MCF * F * (16/12) * (1-Ri) * (1-OX)) / 1000
+        co2eq_aterro_total = ch4_aterro_t * GWP_CH4_20
+        co2eq_aterro_ano = co2eq_aterro_total / ANOS_SIMULACAO
 
-        # --- CÁLCULO TRATAMENTO BIOLÓGICO (Yang et al. 2017) ---
-        # Compostagem
+        # 2. Emissões na Compostagem (Yang et al. 2017)
         ch4_comp_t = ch4_compostagem_total(massa_kg) / 1000
-        co2eq_comp_t = ch4_comp_t * GWP_CH4_20
+        co2eq_comp_total = ch4_comp_t * GWP_CH4_20
+        co2eq_comp_ano = co2eq_comp_total / ANOS_SIMULACAO
+
+        # 3. Emissões Evitadas (Média Anual)
+        emissao_evitada_total = co2eq_aterro_total - co2eq_comp_total
+        emissao_evitada_ano = emissao_evitada_total / ANOS_SIMULACAO
+
+        # --- EXIBIÇÃO DAS MÉTRICAS ---
+        st.write(f"**Análise de Impacto Climático (GWP20 - Horizonte de {ANOS_SIMULACAO} anos)**")
         
-        # Vermicompostagem
-        ch4_vermi_t = ch4_vermicompostagem_total(massa_kg) / 1000
-        co2eq_vermi_t = ch4_vermi_t * GWP_CH4_20
-
-        # Emissões evitadas (Aterro - Tratamento)
-        # Nota: Calculamos a economia se trocarmos Aterro por Compostagem
-        co2eq_evitado_t = co2eq_aterro_t - co2eq_comp_t
-
-        # --- EXIBIÇÃO ---
-        col1, col2, col3 = st.columns(3)
-        with col1:
+        m1, m2, m3 = st.columns(3)
+        with m1:
             st.metric("Massa no Aterro", f"{formatar_numero_br(massa_aterro_t)} t")
-        with col2:
-            st.metric("Emissão Aterro (GWP20)", f"{formatar_numero_br(co2eq_aterro_t)} tCO₂eq")
-        with col3:
-            st.metric("CO₂eq Evitado (GWP20)", f"{formatar_numero_br(co2eq_evitado_t)} tCO₂eq", delta_color="normal")
+        with m2:
+            st.metric("Total Evitado (20 anos)", f"{formatar_numero_br(emissao_evitada_total)} tCO₂eq")
+        with m3:
+            st.metric("Média Evitada por Ano", f"{formatar_numero_br(emissao_evitada_ano)} tCO₂eq/ano", delta="Redução")
 
-        st.info(f"**Análise de 20 anos:** Ao desviar essas podas do aterro para compostagem, evita-se a emissão de **{formatar_numero_br(co2eq_evitado_t)} toneladas de CO₂ equivalente**, considerando o alto potencial de aquecimento do metano no curto prazo (GWP20 = {GWP_CH4_20}).")
+        st.info(f"💡 De acordo com o modelo, o desvio de podas para compostagem evita, em média, a emissão de **{formatar_numero_br(emissao_evitada_ano)} toneladas de CO₂eq por ano**.")
         
-        st.caption(
-            "Metodologia: IPCC 2006 (FOD adaptado), GWP20 do AR6 (IPCC) e fatores de Yang et al. (2017)."
-        )
+        st.caption(f"Cálculos utilizam GWP20={GWP_CH4_20} (IPCC AR6) e fatores de emissão de Yang et al. (2017).")
     else:
-        st.info("Não há massa de podas e galhadas destinada a aterro sanitário.")
+        st.info("Não há massa de podas destinada a aterro sanitário para calcular emissões evitadas.")
 else:
-    st.info("Dados de áreas verdes públicas não encontrados para este município.")
+    st.info("Não foram encontrados dados de podas/áreas verdes para este município.")
 
 # =========================================================
 # Rodapé
 # =========================================================
 st.markdown("---")
-st.caption("Fonte: SNIS – Sistema Nacional de Informações sobre Saneamento | Cálculos climáticos: Horizonte 20 anos (AR6)")
+st.caption("Fonte: SNIS – Sistema Nacional de Informações sobre Saneamento. Metodologia de cálculo climatológico baseada no horizonte de 20 anos.")
