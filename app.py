@@ -25,14 +25,11 @@ def formatar_numero_br(valor, casas_decimais=2):
     try:
         num = float(valor)
         if num == 0:
-            return "0"
+            return "0,00"
         formato = f"{{:,.{casas_decimais}f}}".format(num)
         partes = formato.split(".")
-        if len(partes) == 2:
-            milhar = partes[0].replace(",", "X").replace(".", ",").replace("X", ".")
-            return f"{milhar},{partes[1]}"
-        else:
-            return formato.replace(",", ".")
+        milhar = partes[0].replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"{milhar},{partes[1]}"
     except:
         return str(valor)
 
@@ -41,16 +38,7 @@ def formatar_massa_br(valor):
         return "Não informado"
     try:
         massa = float(valor)
-        if massa == 0:
-            return "0 t"
-        elif massa < 1:
-            return f"{formatar_numero_br(massa, 3)} t"
-        elif massa < 100:
-            return f"{formatar_numero_br(massa, 2)} t"
-        elif massa < 1000:
-            return f"{formatar_numero_br(massa, 2)} t"
-        else:
-            return f"{formatar_numero_br(massa, 2)} t"
+        return f"{formatar_numero_br(massa, 2)} t"
     except:
         return str(valor)
 
@@ -83,6 +71,7 @@ df = df.rename(columns={
 COL_MUNICIPIO = "MUNICÍPIO"
 COL_TIPO_COLETA = "TIPO_COLETA_EXECUTADA"
 COL_MASSA = "MASSA_COLETADA"
+COL_DESTINO = "Tipo de unidade de destino"
 
 # =========================================================
 # Classificação técnica
@@ -92,7 +81,6 @@ def classificar_coleta(texto):
         return ("Não informado", False, False, "Tipo de coleta não informado")
 
     t = str(texto).lower().strip()
-    t_clean = ' '.join([word for word in t.split() if not word.isdigit()])
 
     palavras_chave = {
         "poda": ("Orgânico direto", True, True, "Resíduo vegetal limpo"),
@@ -111,7 +99,7 @@ def classificar_coleta(texto):
     }
 
     for palavra, classificacao in palavras_chave.items():
-        if palavra in t_clean:
+        if palavra in t:
             return classificacao
 
     return ("Indefinido", False, False, "Tipo não classificado automaticamente")
@@ -136,13 +124,10 @@ if municipio == "BRASIL – Todos os municípios":
     st.subheader("🇧🇷 Brasil — Síntese Nacional de RSU")
 else:
     df_mun = df_clean[df_clean[COL_MUNICIPIO] == municipio]
-    if df_mun.empty:
-        st.warning(f"⚠️ Não foram encontrados dados para {municipio}")
-        st.stop()
     st.subheader(f"📍 {municipio}")
 
 # =========================================================
-# Processamento
+# Processamento principal
 # =========================================================
 resultados = []
 total_massa = 0
@@ -153,10 +138,7 @@ for _, row in df_mun.iterrows():
     categoria, comp, vermi, justificativa = classificar_coleta(row.get(COL_TIPO_COLETA))
     massa_valor = row.get(COL_MASSA)
 
-    try:
-        massa_float = float(massa_valor) if not pd.isna(massa_valor) else 0
-    except:
-        massa_float = 0
+    massa_float = pd.to_numeric(massa_valor, errors="coerce") or 0
 
     total_massa += massa_float
     if comp:
@@ -165,7 +147,7 @@ for _, row in df_mun.iterrows():
         massa_vermicompostagem += massa_float
 
     resultados.append({
-        "Tipo de coleta executada": row.get(COL_TIPO_COLETA, "Não informado"),
+        "Tipo de coleta executada": row.get(COL_TIPO_COLETA),
         "Massa coletada": formatar_massa_br(massa_valor),
         "Categoria técnica": categoria,
         "Compostagem": "✅" if comp else "❌",
@@ -176,34 +158,64 @@ for _, row in df_mun.iterrows():
 df_result = pd.DataFrame(resultados)
 
 # =========================================================
-# Exibição
+# Exibição principal
 # =========================================================
-if not df_result.empty:
-    st.dataframe(df_result, use_container_width=True)
+st.dataframe(df_result, use_container_width=True)
 
-    st.subheader("📊 Síntese técnica")
+st.subheader("📊 Síntese técnica")
 
-    perc_comp = (massa_compostagem / total_massa * 100) if total_massa > 0 else 0
-    perc_vermi = (massa_vermicompostagem / total_massa * 100) if total_massa > 0 else 0
+perc_comp = (massa_compostagem / total_massa * 100) if total_massa > 0 else 0
+perc_vermi = (massa_vermicompostagem / total_massa * 100) if total_massa > 0 else 0
 
-    col1, col2, col3 = st.columns(3)
+col1, col2, col3 = st.columns(3)
 
-    col1.metric(
-        "Massa total coletada",
-        f"{formatar_numero_br(total_massa,2)} t"
+col1.metric("Massa total coletada", f"{formatar_numero_br(total_massa)} t")
+col2.metric(
+    "Massa apta para compostagem",
+    f"{formatar_numero_br(massa_compostagem)} t",
+    f"{formatar_numero_br(perc_comp)}%"
+)
+col3.metric(
+    "Massa apta para vermicompostagem",
+    f"{formatar_numero_br(massa_vermicompostagem)} t",
+    f"{formatar_numero_br(perc_vermi)}%"
+)
+
+# =========================================================
+# Painel específico – Podas e galhadas (áreas verdes públicas)
+# =========================================================
+st.markdown("---")
+st.subheader("🌳 Destinação das podas e galhadas de áreas verdes públicas")
+
+df_podas = df_mun[
+    df_mun[COL_TIPO_COLETA].astype(str).str.lower().str.contains("áreas verdes públicas", na=False)
+].copy()
+
+if df_podas.empty:
+    st.info("ℹ️ Não há registros desse tipo de coleta para a seleção atual.")
+else:
+    df_podas["MASSA_FLOAT"] = pd.to_numeric(df_podas[COL_MASSA], errors="coerce").fillna(0)
+    total_podas = df_podas["MASSA_FLOAT"].sum()
+
+    df_destino = (
+        df_podas
+        .groupby(COL_DESTINO, dropna=False)["MASSA_FLOAT"]
+        .sum()
+        .reset_index()
     )
 
-    col2.metric(
-        "Massa apta para compostagem",
-        f"{formatar_numero_br(massa_compostagem,2)} t",
-        f"{formatar_numero_br(perc_comp,2)}%"
+    df_destino["Percentual (%)"] = df_destino["MASSA_FLOAT"] / total_podas * 100
+    df_destino["Massa (t)"] = df_destino["MASSA_FLOAT"].apply(lambda x: formatar_numero_br(x))
+    df_destino["Percentual (%)"] = df_destino["Percentual (%)"].apply(lambda x: formatar_numero_br(x))
+
+    df_destino = df_destino[[COL_DESTINO, "Massa (t)", "Percentual (%)"]]
+
+    st.metric(
+        "Massa total de podas e galhadas",
+        f"{formatar_numero_br(total_podas)} t"
     )
 
-    col3.metric(
-        "Massa apta para vermicompostagem",
-        f"{formatar_numero_br(massa_vermicompostagem,2)} t",
-        f"{formatar_numero_br(perc_vermi,2)}%"
-    )
+    st.dataframe(df_destino, use_container_width=True)
 
 # =========================================================
 # Rodapé
@@ -214,6 +226,5 @@ st.caption(
     "e adequação ao tratamento biológico (compostagem/vermicompostagem)."
 )
 st.caption(
-    "Fonte: SNIS - Sistema Nacional de Informações sobre Saneamento | "
-    f"Coluna de massa: {COL_MASSA}"
+    "Fonte: SNIS - Sistema Nacional de Informações sobre Saneamento"
 )
