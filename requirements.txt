@@ -1,3 +1,8 @@
+streamlit
+pandas
+openpyxl
+
+
 # requirements.txt - Versão Completa
 
 # Framework principal
