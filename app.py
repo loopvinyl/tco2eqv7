@@ -181,7 +181,7 @@ if not df_podas.empty:
     st.subheader("🔥 Potencial de geração de metano (CH₄) – Aterro Sanitário")
 
     massa_aterro_t = df_podas_destino.loc[
-        df_podas_destino[COL_DESTINO].astype(str).str.upper().str.contains("ATERRO", na=False),
+        df_podas_destino[COL_DESTINO].astype(str).str.upper().str.contains("ATERRO SANITARIO", na=False),
         "MASSA_FLOAT"
     ].sum()
 
