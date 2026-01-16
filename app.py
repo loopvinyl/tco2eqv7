@@ -252,7 +252,7 @@ if not df_podas.empty:
     # =========================================================
     # 🎯 Calcular MCF para cada tipo de destino
     # =========================================================
-    st.subheader("🎯 Fatores de Correção de Metano (MCF) por Tipo de Destino")
+    st.subheader("🎯 Fatores de Correção de Metano (MCF) por Tipo de Aterro")
     
     # Adicionar coluna de MCF à tabela
     df_podas_destino["MCF"] = df_podas_destino[COL_DESTINO].apply(determinar_mcf_por_destino)
