@@ -28,12 +28,6 @@ def formatar_massa(valor):
     except:
         return "Não informado"
 
-def formatar_monetario(valor, simbolo="R$", casas=2):
-    try:
-        return f"{simbolo} {formatar_br(valor, casas)}"
-    except:
-        return "Não informado"
-
 # =========================================================
 # COTAÇÃO AUTOMÁTICA – CARBONO
 # =========================================================
@@ -188,7 +182,7 @@ RED_VERMI = 0.95
 evitado_comp = co2eq_aterro * RED_COMP
 evitado_vermi = co2eq_aterro * RED_VERMI
 
-st.subheader("♻️ Emissões Evitadas pelo Desvio do Ateriro")
+st.subheader("♻️ Emissões Evitadas pelo Desvio do Aterro")
 
 c1, c2 = st.columns(2)
 with c1:
@@ -222,7 +216,7 @@ st.markdown(
 )
 
 # =========================================================
-# VALORAÇÃO ECONÔMICA – 20 ANOS (CORRIGIDO)
+# VALORAÇÃO ECONÔMICA – 20 ANOS (COM HTML PARA EVITAR PROBLEMAS)
 # =========================================================
 st.subheader("💰 Valor Econômico das Emissões Evitadas (20 anos)")
 
@@ -230,46 +224,56 @@ anos = 20
 preco = st.session_state["preco_carbono"]
 eurbrl = st.session_state["eur_brl"]
 
-# Criar um layout organizado com colunas
-col1, col2 = st.columns(2)
+# Cálculos
+total_comp = evitado_comp * anos
+valor_eur_comp = total_comp * preco
+valor_brl_comp = valor_eur_comp * eurbrl
 
-with col1:
-    st.markdown("### 🍃 Compostagem")
-    
-    total_comp = evitado_comp * anos
-    valor_eur_comp = total_comp * preco
-    valor_brl_comp = valor_eur_comp * eurbrl
-    
-    st.markdown(f"**tCO₂eq evitado (20 anos):** {formatar_br(total_comp, 2)}")
-    st.markdown(f"**Valor econômico (€):** € {formatar_br(valor_eur_comp, 2)}")
-    st.markdown(f"**Valor econômico (R$):** R$ {formatar_br(valor_brl_comp, 2)}")
+total_vermi = evitado_vermi * anos
+valor_eur_vermi = total_vermi * preco
+valor_brl_vermi = valor_eur_vermi * eurbrl
 
-with col2:
-    st.markdown("### 🐛 Vermicompostagem")
-    
-    total_vermi = evitado_vermi * anos
-    valor_eur_vermi = total_vermi * preco
-    valor_brl_vermi = valor_eur_vermi * eurbrl
-    
-    st.markdown(f"**tCO₂eq evitado (20 anos):** {formatar_br(total_vermi, 2)}")
-    st.markdown(f"**Valor econômico (€):** € {formatar_br(valor_eur_vermi, 2)}")
-    st.markdown(f"**Valor econômico (R$):** R$ {formatar_br(valor_brl_vermi, 2)}")
+# Usar HTML para garantir formatação correta
+st.markdown("""
+<div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; margin: 10px 0;">
+    <h3 style="color: #2e7d32;">🍃 Compostagem</h3>
+    <p><strong>tCO₂eq evitado (20 anos):</strong> {}</p>
+    <p><strong>Valor econômico (€):</strong> € {}</p>
+    <p><strong>Valor econômico (R$):</strong> R$ {}</p>
+</div>
+""".format(
+    formatar_br(total_comp, 2),
+    formatar_br(valor_eur_comp, 2),
+    formatar_br(valor_brl_comp, 2)
+), unsafe_allow_html=True)
+
+st.markdown("""
+<div style="background-color: #e8f5e9; padding: 20px; border-radius: 10px; margin: 10px 0;">
+    <h3 style="color: #1b5e20;">🐛 Vermicompostagem</h3>
+    <p><strong>tCO₂eq evitado (20 anos):</strong> {}</p>
+    <p><strong>Valor econômico (€):</strong> € {}</p>
+    <p><strong>Valor econômico (R$):</strong> R$ {}</p>
+</div>
+""".format(
+    formatar_br(total_vermi, 2),
+    formatar_br(valor_eur_vermi, 2),
+    formatar_br(valor_brl_vermi, 2)
+), unsafe_allow_html=True)
 
 # =========================================================
-# RESUMO DOS VALORES
+# RESUMO EM TABELA PARA CLAREZA
 # =========================================================
 st.subheader("📊 Resumo Comparativo")
 
 resumo_data = {
     "Tecnologia": ["Compostagem", "Vermicompostagem"],
-    "tCO₂eq/ano": [formatar_br(evitado_comp, 2), formatar_br(evitado_vermi, 2)],
-    "tCO₂eq/20 anos": [formatar_br(total_comp, 2), formatar_br(total_vermi, 2)],
-    "Valor (€)": [formatar_br(valor_eur_comp, 2), formatar_br(valor_eur_vermi, 2)],
-    "Valor (R$)": [formatar_br(valor_brl_comp, 2), formatar_br(valor_brl_vermi, 2)]
+    "tCO₂eq evitado (20 anos)": [formatar_br(total_comp, 2), formatar_br(total_vermi, 2)],
+    "Valor (€)": [f"€ {formatar_br(valor_eur_comp, 2)}", f"€ {formatar_br(valor_eur_vermi, 2)}"],
+    "Valor (R$)": [f"R$ {formatar_br(valor_brl_comp, 2)}", f"R$ {formatar_br(valor_brl_vermi, 2)}"]
 }
 
 resumo_df = pd.DataFrame(resumo_data)
-st.dataframe(resumo_df, use_container_width=True)
+st.dataframe(resumo_df, use_container_width=True, hide_index=True)
 
 # =========================================================
 # RODAPÉ
