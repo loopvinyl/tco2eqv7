@@ -35,7 +35,7 @@ def formatar_massa_br(valor):
     if pd.isna(valor) or valor is None:
         return "Não informado"
     try:
-        return f"{formatar_numero_br(float(valor), 2)} t"
+        return f"{formatar_numero_br(valor)} t"
     except:
         return "Não informado"
 
@@ -57,7 +57,7 @@ def load_data():
 df = load_data()
 
 # =========================================================
-# Definição de colunas principais
+# Definição de colunas
 # =========================================================
 df = df.rename(columns={
     df.columns[2]: "MUNICÍPIO",
@@ -68,42 +68,32 @@ df = df.rename(columns={
 COL_MUNICIPIO = "MUNICÍPIO"
 COL_TIPO_COLETA = "TIPO_COLETA_EXECUTADA"
 COL_MASSA = "MASSA_COLETADA"
-
-# =========================================================
-# Coluna AC – Tipo de unidade de destino
-# =========================================================
-COL_DESTINO = df.columns[28]
+COL_DESTINO = df.columns[28]  # Coluna AC
 
 # =========================================================
 # Classificação técnica
 # =========================================================
 def classificar_coleta(texto):
     if pd.isna(texto):
-        return ("Não informado", False, False, "Tipo de coleta não informado")
+        return ("Não informado", False, False, "Tipo não informado")
 
     t = str(texto).lower()
 
-    palavras_chave = {
+    palavras = {
         "poda": ("Orgânico direto", True, True, "Resíduo vegetal limpo"),
         "galhada": ("Orgânico direto", True, True, "Resíduo vegetal limpo"),
         "verde": ("Orgânico direto", True, True, "Resíduo vegetal limpo"),
-        "vegetal": ("Orgânico direto", True, True, "Resíduo vegetal limpo"),
         "orgânica": ("Orgânico direto", True, True, "Orgânico segregado"),
-        "indiferenciada": ("Orgânico potencial", True, False, "Exige triagem prévia"),
-        "domiciliar": ("Orgânico potencial", True, False, "Exige triagem prévia"),
-        "doméstico": ("Orgânico potencial", True, False, "Exige triagem prévia"),
+        "domiciliar": ("Orgânico potencial", True, False, "Exige triagem"),
         "varrição": ("Inapto", False, False, "Alta contaminação"),
-        "limpeza": ("Inapto", False, False, "Alta contaminação"),
-        "seletiva": ("Não orgânico", False, False, "Resíduos recicláveis"),
-        "recicl": ("Não orgânico", False, False, "Resíduos recicláveis"),
-        "seco": ("Não orgânico", False, False, "Resíduos recicláveis")
+        "seletiva": ("Não orgânico", False, False, "Recicláveis")
     }
 
-    for palavra, classificacao in palavras_chave.items():
-        if palavra in t:
-            return classificacao
+    for p, c in palavras.items():
+        if p in t:
+            return c
 
-    return ("Indefinido", False, False, "Tipo não classificado automaticamente")
+    return ("Indefinido", False, False, "Não classificado")
 
 # =========================================================
 # Limpeza
@@ -125,30 +115,30 @@ else:
     st.subheader(f"📍 {municipio}")
 
 # =========================================================
-# Processamento
+# Processamento principal
 # =========================================================
+resultados = []
 total_massa = 0
 massa_compostagem = 0
-massa_vermicompostagem = 0
-resultados = []
+massa_vermi = 0
 
 for _, row in df_mun.iterrows():
-    categoria, comp, vermi, justificativa = classificar_coleta(row.get(COL_TIPO_COLETA))
-    massa = pd.to_numeric(row.get(COL_MASSA), errors="coerce") or 0
+    categoria, comp, vermi, just = classificar_coleta(row[COL_TIPO_COLETA])
+    massa = pd.to_numeric(row[COL_MASSA], errors="coerce") or 0
 
     total_massa += massa
     if comp:
         massa_compostagem += massa
     if vermi:
-        massa_vermicompostagem += massa
+        massa_vermi += massa
 
     resultados.append({
-        "Tipo de coleta executada": row.get(COL_TIPO_COLETA),
-        "Massa coletada": formatar_massa_br(row.get(COL_MASSA)),
-        "Categoria técnica": categoria,
+        "Tipo de coleta": row[COL_TIPO_COLETA],
+        "Massa": formatar_massa_br(massa),
+        "Categoria": categoria,
         "Compostagem": "✅" if comp else "❌",
         "Vermicompostagem": "✅" if vermi else "❌",
-        "Justificativa técnica": justificativa
+        "Justificativa": just
     })
 
 st.dataframe(pd.DataFrame(resultados), use_container_width=True)
@@ -160,9 +150,7 @@ st.markdown("---")
 st.subheader("🌳 Destinação das podas e galhadas de áreas verdes públicas")
 
 df_podas = df_mun[
-    df_mun[COL_TIPO_COLETA]
-    .astype(str)
-    .str.lower()
+    df_mun[COL_TIPO_COLETA].astype(str).str.lower()
     .str.contains("áreas verdes públicas", na=False)
 ].copy()
 
@@ -170,24 +158,73 @@ if not df_podas.empty:
     df_podas["MASSA_FLOAT"] = pd.to_numeric(df_podas[COL_MASSA], errors="coerce").fillna(0)
     total_podas = df_podas["MASSA_FLOAT"].sum()
 
-    df_destino = (
-        df_podas
-        .groupby(COL_DESTINO, dropna=False)["MASSA_FLOAT"]
-        .sum()
-        .reset_index()
+    df_podas_destino = (
+        df_podas.groupby(COL_DESTINO)["MASSA_FLOAT"]
+        .sum().reset_index()
     )
 
-    df_destino["Percentual (%)"] = df_destino["MASSA_FLOAT"] / total_podas * 100
-
-    # 🔥 ORDENAÇÃO DO MAIOR PARA O MENOR PERCENTUAL
-    df_destino = df_destino.sort_values(
-        by="Percentual (%)",
-        ascending=False
-    )
-
-    df_destino["Massa (t)"] = df_destino["MASSA_FLOAT"].apply(formatar_numero_br)
-    df_destino["Percentual (%)"] = df_destino["Percentual (%)"].apply(formatar_numero_br)
+    df_podas_destino["Percentual (%)"] = df_podas_destino["MASSA_FLOAT"] / total_podas * 100
+    df_podas_destino = df_podas_destino.sort_values("Percentual (%)", ascending=False)
 
     st.metric("Massa total de podas e galhadas", f"{formatar_numero_br(total_podas)} t")
-    st.dataframe(df_destino[[COL_DESTINO, "Massa (t)", "Percentual (%)"]],
+
+    df_view = df_podas_destino.copy()
+    df_view["Massa (t)"] = df_view["MASSA_FLOAT"].apply(formatar_numero_br)
+    df_view["Percentual (%)"] = df_view["Percentual (%)"].apply(formatar_numero_br)
+
+    st.dataframe(df_view[[COL_DESTINO, "Massa (t)", "Percentual (%)"]],
                  use_container_width=True)
+
+    # =========================================================
+    # 🔥 Potencial de Metano – ATERRO SANITARIO
+    # =========================================================
+    st.subheader("🔥 Potencial de geração de metano (CH₄) – Aterro Sanitário")
+
+    df_aterro = df_podas_destino[
+        df_podas_destino[COL_DESTINO].str.upper().str.contains("ATERRO", na=False)
+    ]
+
+    massa_aterro_t = df_aterro["MASSA_FLOAT"].sum()
+
+    if massa_aterro_t > 0:
+        # Parâmetros IPCC 2006
+        DOC = 0.15
+        MCF = 1.0
+        F = 0.5
+        OX = 0.1
+        Ri = 0.0
+        temperatura = 25  # °C padrão
+        DOCf = 0.0147 * temperatura + 0.28
+
+        massa_kg = massa_aterro_t * 1000
+        ch4_por_kg = DOC * DOCf * MCF * F * (16 / 12) * (1 - Ri) * (1 - OX)
+        ch4_total_t = (massa_kg * ch4_por_kg) / 1000
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Massa no aterro", f"{formatar_numero_br(massa_aterro_t)} t")
+        with col2:
+            st.metric("CH₄ potencial gerado", f"{formatar_numero_br(ch4_total_t)} t CH₄")
+        with col3:
+            st.metric("CH₄ evitável (compostagem)", f"{formatar_numero_br(ch4_total_t)} t CH₄")
+
+        st.caption(
+            "Cálculo baseado na metodologia IPCC 2006 (aterro sanitário, "
+            "DOCf dependente da temperatura, k=0,06 ano⁻¹). "
+            "Considera emissões de CH₄ desprezíveis para compostagem."
+        )
+    else:
+        st.info("Não há massa de podas e galhadas destinada a aterro sanitário.")
+
+else:
+    st.info("Não há registros de podas e galhadas para este recorte.")
+
+# =========================================================
+# Rodapé
+# =========================================================
+st.markdown("---")
+st.caption(
+    "Classificação técnica baseada na origem do resíduo, segregação e adequação "
+    "ao tratamento biológico (compostagem e vermicompostagem)."
+)
+st.caption("Fonte: SNIS – Sistema Nacional de Informações sobre Saneamento")
