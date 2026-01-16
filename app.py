@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import unicodedata
 
 # =========================================================
 # Configuração da página
@@ -17,7 +18,7 @@ de resíduos sólidos urbanos.
 """)
 
 # =========================================================
-# Funções auxiliares para formatação brasileira
+# Funções auxiliares
 # =========================================================
 def formatar_numero_br(valor, casas_decimais=2):
     if pd.isna(valor) or valor is None:
@@ -35,6 +36,14 @@ def formatar_massa_br(valor):
     if pd.isna(valor) or valor is None:
         return "Não informado"
     return f"{formatar_numero_br(valor)} t"
+
+def normalizar_texto(txt):
+    if pd.isna(txt):
+        return ""
+    txt = str(txt)
+    txt = unicodedata.normalize("NFKD", txt)
+    txt = txt.encode("ASCII", "ignore").decode("utf-8")
+    return txt.upper().strip()
 
 # =========================================================
 # Carga do Excel
@@ -176,12 +185,12 @@ if not df_podas.empty:
     )
 
     # =========================================================
-    # 🔥 Potencial de Metano – BASE CONSISTENTE
+    # 🔥 Potencial de Metano – BASE 100% CONSISTENTE
     # =========================================================
     st.subheader("🔥 Potencial de geração de metano (CH₄) – Aterro Sanitário")
 
     massa_aterro_t = df_podas_destino.loc[
-        df_podas_destino[COL_DESTINO].astype(str).str.upper().str.contains("Aterro sanitário", na=False),
+        df_podas_destino[COL_DESTINO].apply(normalizar_texto) == "ATERRO SANITARIO",
         "MASSA_FLOAT"
     ].sum()
 
