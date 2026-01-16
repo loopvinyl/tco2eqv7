@@ -19,7 +19,7 @@ de resíduos sólidos urbanos.
 # =========================================================
 # Funções auxiliares para formatação brasileira
 # =========================================================
-def formatar_numero_br(valor, casas_decimais=1):
+def formatar_numero_br(valor, casas_decimais=2):
     if pd.isna(valor) or valor is None:
         return "Não informado"
     try:
@@ -48,9 +48,9 @@ def formatar_massa_br(valor):
         elif massa < 100:
             return f"{formatar_numero_br(massa, 2)} t"
         elif massa < 1000:
-            return f"{formatar_numero_br(massa, 1)} t"
+            return f"{formatar_numero_br(massa, 2)} t"
         else:
-            return f"{formatar_numero_br(massa, 0)} t"
+            return f"{formatar_numero_br(massa, 2)} t"
     except:
         return str(valor)
 
@@ -190,19 +190,19 @@ if not df_result.empty:
 
     col1.metric(
         "Massa total coletada",
-        f"{formatar_numero_br(total_massa,1)} t"
+        f"{formatar_numero_br(total_massa,2)} t"
     )
 
     col2.metric(
         "Massa apta para compostagem",
-        f"{formatar_numero_br(massa_compostagem,1)} t",
-        f"{formatar_numero_br(perc_comp,1)}%"
+        f"{formatar_numero_br(massa_compostagem,2)} t",
+        f"{formatar_numero_br(perc_comp,2)}%"
     )
 
     col3.metric(
         "Massa apta para vermicompostagem",
-        f"{formatar_numero_br(massa_vermicompostagem,1)} t",
-        f"{formatar_numero_br(perc_vermi,1)}%"
+        f"{formatar_numero_br(massa_vermicompostagem,2)} t",
+        f"{formatar_numero_br(perc_vermi,2)}%"
     )
 
 # =========================================================
