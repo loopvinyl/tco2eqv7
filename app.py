@@ -17,7 +17,6 @@ st.set_page_config(
 # CSS Customizado para Mobile-First e Design Profissional
 st.markdown("""
 <style>
-    /* Importação de fonte moderna */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
 
     :root {
@@ -29,106 +28,78 @@ st.markdown("""
         --text-main: #0f172a;
     }
 
-    /* Ajuste de Fonte Global */
     html, body, [class*="st-"] {
         font-family: 'Inter', sans-serif;
     }
 
-    /* Container Principal - Padding adaptativo para mobile */
+    /* Padding adaptativo */
     .block-container {
-        padding-top: 2rem !important;
-        padding-bottom: 2rem !important;
+        padding: 2rem 1rem !important;
     }
 
-    /* Header Profissional e Responsivo */
+    /* Header Profissional */
     .main-header {
         background: linear-gradient(135deg, #0066cc 0%, #00cc99 100%);
-        padding: 2.5rem 1.5rem;
-        border-radius: 16px;
+        padding: 3rem 1.5rem;
+        border-radius: 20px;
         color: white;
         margin-bottom: 2rem;
-        box-shadow: 0 10px 25px rgba(0, 102, 204, 0.2);
+        box-shadow: 0 10px 30px rgba(0, 102, 204, 0.15);
         text-align: center;
     }
 
     .main-header h1 {
         font-weight: 800;
-        font-size: clamp(1.8rem, 5vw, 3rem) !important;
+        font-size: clamp(2rem, 6vw, 3.5rem) !important;
         margin-bottom: 0.5rem;
         color: white !important;
+        letter-spacing: -1px;
     }
 
-    .main-header p {
-        font-size: clamp(0.9rem, 2vw, 1.1rem);
-        opacity: 0.9;
-    }
-
-    /* Grid de Cards Responsivo */
+    /* Cards Responsivos */
     .metric-container {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
         gap: 1.5rem;
-        margin-bottom: 2rem;
+        margin: 1rem 0;
     }
 
     .custom-card {
         background: white;
-        padding: 1.5rem;
-        border-radius: 12px;
-        border-left: 6px solid var(--primary);
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        transition: transform 0.2s ease;
-    }
-
-    .custom-card:hover {
-        transform: translateY(-4px);
-    }
-
-    .custom-card.success { border-left-color: var(--secondary); }
-    .custom-card.warning { border-left-color: var(--warning); }
-
-    .card-label {
-        font-size: 0.75rem;
-        font-weight: 600;
-        color: #64748b;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-
-    .card-value {
-        font-size: 1.8rem;
-        font-weight: 800;
-        color: var(--text-main);
-        margin: 0.5rem 0;
-    }
-
-    /* Botões Modernos */
-    .stButton > button {
-        width: 100%;
-        background: linear-gradient(135deg, #0066cc 0%, #004d99 100%);
-        color: white;
-        border: none;
-        padding: 0.75rem 1.5rem;
-        border-radius: 10px;
-        font-weight: 600;
+        padding: 1.8rem;
+        border-radius: 16px;
+        border-top: 5px solid var(--primary);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
         transition: all 0.3s ease;
     }
 
-    .stButton > button:hover {
-        opacity: 0.9;
-        box-shadow: 0 4px 12px rgba(0, 102, 204, 0.4);
+    .custom-card:hover { transform: translateY(-5px); box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); }
+    .custom-card.success { border-top-color: var(--secondary); }
+
+    .card-label { font-size: 0.85rem; font-weight: 600; color: #64748b; text-transform: uppercase; }
+    .card-value { font-size: 2.2rem; font-weight: 800; color: var(--text-main); margin: 0.5rem 0; }
+
+    /* Botão Estilo App Mobile */
+    .stButton > button {
+        width: 100%;
+        background: var(--primary);
+        color: white;
+        border: none;
+        padding: 1rem;
+        border-radius: 12px;
+        font-weight: 700;
+        font-size: 1.1rem;
+        margin-top: 1rem;
     }
 
-    /* Ajustes para Mobile (Telas < 768px) */
     @media (max-width: 768px) {
-        .main-header { padding: 1.5rem 1rem; }
-        .stTabs [data-baseweb="tab"] { font-size: 0.8rem; padding: 0.5rem; }
+        .card-value { font-size: 1.8rem; }
     }
 </style>
 """, unsafe_allow_html=True)
 
 # =============================================================================
-# LÓGICA DE DADOS
+# INICIALIZAÇÃO SEGURA (Prevenção de KeyError)
 # =============================================================================
 
 if 'cotacoes' not in st.session_state:
@@ -139,94 +110,85 @@ if 'cotacoes' not in st.session_state:
     }
 
 # =============================================================================
-# SIDEBAR (Foco em Parâmetros)
+# SIDEBAR
 # =============================================================================
 
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/1829/1829589.png", width=80)
-    st.title("Configurações")
+    st.markdown("### 🛠️ Painel de Controle")
     
+    # Uso de get() para evitar erros de chave faltante
+    c_eur = st.session_state.cotacoes.get('carbono_eur', 85.0)
+    e_brl = st.session_state.cotacoes.get('eur_brl', 6.0)
+
     with st.expander("💰 Mercado Financeiro", expanded=True):
-        carbono = st.number_input("Preço Carbono (€)", value=st.session_state.cotacoes['carbono_eur'])
-        cambio = st.number_input("Câmbio EUR/BRL", value=st.session_state.cotacoes['eur_brl'])
+        carbono = st.number_input("Preço Carbono (€)", value=float(c_eur), step=0.1)
+        cambio = st.number_input("Câmbio EUR/BRL", value=float(e_brl), step=0.01)
     
     with st.expander("🌱 Parâmetros Técnicos", expanded=False):
-        temp = st.slider("Temp. Média Local (°C)", 10, 40, 25)
-        umidade = st.slider("Umidade do Resíduo (%)", 40, 95, 80)
+        st.slider("Temperatura Local (°C)", 10, 40, 25)
+        st.slider("Umidade (%)", 40, 95, 80)
 
 # =============================================================================
-# LAYOUT PRINCIPAL
+# CONTEÚDO PRINCIPAL
 # =============================================================================
 
-# Header adaptativo
 st.markdown(f"""
 <div class="main-header">
     <h1>Carbon Simulator Pro</h1>
-    <p>Tecnologia para gestão de ativos ambientais e créditos de carbono</p>
+    <p>Inteligência de dados para o mercado de carbono</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Tabs com ícones (Melhor UX)
-tab1, tab2 = st.tabs(["📊 Simulador", "📈 Projeção Comercial"])
+tab1, tab2 = st.tabs(["📊 Simulador", "📈 Projeções"])
 
 with tab1:
-    # Layout em colunas que se empilham no mobile automaticamente pelo Streamlit
-    col_input, col_space, col_output = st.columns([1, 0.1, 1.5])
+    col_in, col_out = st.columns([1, 1.5])
     
-    with col_input:
-        st.subheader("Entrada de Volume")
-        toneladas = st.number_input("Resíduos Orgânicos (Toneladas)", min_value=0.0, value=100.0, step=10.0)
-        st.info(f"Cotação atual: R$ {carbono * cambio:.2f} / tCO2eq")
+    with col_in:
+        st.subheader("Configuração do Lote")
+        toneladas = st.number_input("Volume de Orgânicos (Toneladas)", min_value=0.0, value=100.0)
         
-        # O botão agora ocupa 100% da largura da coluna
-        calcular = st.button("CALCULAR IMPACTO")
+        # Botão com largura total
+        if st.button("CALCULAR RESULTADOS"):
+            st.success("Cálculo realizado com sucesso!")
 
-    with col_output:
-        # Simulando cálculo IPCC simplificado
-        fator_emissao = 1.25 # Exemplo: tCO2eq por tonelada de resíduo evitado
-        total_co2 = toneladas * fator_emissao
-        receita_estimada = total_co2 * carbono * cambio
+    with col_out:
+        # Lógica de cálculo
+        total_co2 = toneladas * 1.25 # Fator hipotético IPCC
+        receita = total_co2 * carbono * cambio
 
-        # Grid de Cards Customizados
         st.markdown(f"""
         <div class="metric-container">
             <div class="custom-card">
                 <div class="card-label">Créditos Gerados</div>
                 <div class="card-value">{total_co2:,.2f}</div>
-                <div style="color:var(--primary); font-size:0.8rem; font-weight:bold;">tCO₂eq Estimadas</div>
+                <div style="color:var(--primary); font-weight:bold;">tCO₂eq Totais</div>
             </div>
             <div class="custom-card success">
-                <div class="card-label">Potencial Financeiro</div>
-                <div class="card-value">R$ {receita_estimada:,.20n}</div>
-                <div style="color:var(--secondary); font-size:0.8rem; font-weight:bold;">Receita Bruta Estimada</div>
+                <div class="card-label">Valor de Mercado</div>
+                <div class="card-value">R$ {receita:,.2f}</div>
+                <div style="color:var(--secondary); font-weight:bold;">Receita Estimada</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
 with tab2:
-    st.subheader("Análise de ROI (Retorno sobre Investimento)")
+    st.subheader("Análise Temporal de Ativos")
+    df = pd.DataFrame({
+        'Ano': [1, 2, 3, 4, 5],
+        'Receita': [receita * i for i in range(1, 6)]
+    })
     
-    # Gráfico responsivo do Plotly
-    anos = [1, 2, 3, 4, 5]
-    receita_acumulada = [receita_estimada * i for i in anos]
-    custo_estimado = [receita_estimada * 0.3 * i for i in anos] # 30% custo op
-
-    fig = px.area(
-        x=anos, 
-        y=[receita_acumulada, custo_estimado],
-        labels={'x': 'Anos de Operação', 'value': 'Valor (R$)'},
-        color_discrete_sequence=['#00cc99', '#ff5555'],
-        title="Projeção Financeira de 5 Anos"
-    )
+    fig = px.bar(df, x='Ano', y='Receita', 
+                 color_discrete_sequence=['#0066cc'],
+                 title="Acúmulo de Créditos em 5 Anos")
     
     fig.update_layout(
-        legend_title_text='Legenda',
-        margin=dict(l=20, r=20, t=50, b=20),
-        hovermode="x unified"
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        margin=dict(l=0, r=0, t=40, b=0)
     )
-    
     st.plotly_chart(fig, use_container_width=True)
 
-# Footer simples
 st.markdown("---")
-st.caption(f"Dados atualizados às {st.session_state.cotacoes['last_update']} | Carbon Simulator Pro © 2026")
+st.caption(f"© 2026 Carbon Simulator Pro | Enterprise Edition")
