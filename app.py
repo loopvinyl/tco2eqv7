@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import unicodedata
-import numpy as np
 
 # =========================================================
 # Configuração da página
@@ -113,12 +112,11 @@ def determinar_mcf_por_destino(destino):
         return 0.0
 
 # =========================================================
-# Função para calcular emissões de CH4 do aterro (Tier 1 - IPCC 2006)
+# Função para calcular emissões de CH4 do aterro
 # =========================================================
-def calcular_emissoes_aterro_total(massa_t, mcf, temperatura=25.0):
+def calcular_emissoes_aterro(massa_t, mcf, temperatura=25.0):
     """
-    Calcula emissões TOTAIS de CH4 do aterro usando metodologia IPCC 2006 Tier 1.
-    Retorna emissões totais ao longo de toda a decomposição.
+    Calcula emissões de CH4 do aterro usando metodologia IPCC 2006.
     """
     # Parâmetros IPCC 2006 para resíduos de poda
     DOC = 0.15  # Fraction of degradable organic carbon
@@ -132,45 +130,6 @@ def calcular_emissoes_aterro_total(massa_t, mcf, temperatura=25.0):
     ch4_t = ch4_kg / 1000
     
     return ch4_t
-
-# =========================================================
-# NOVA: Função para calcular emissões em 20 anos (FOD - First Order Decay)
-# =========================================================
-def calcular_emissoes_aterro_20anos(massa_t, mcf, temperatura=25.0):
-    """
-    Calcula emissões de CH4 do aterro em 20 anos usando modelo FOD simplificado.
-    Baseado no IPCC 2006 First Order Decay para resíduos de jardim.
-    """
-    # Parâmetros para resíduos de jardim (poda) - IPCC 2006
-    DOC = 0.15  # Fraction of degradable organic carbon
-    DOCf = 0.0147 * temperatura + 0.28  # Decomposable fraction of DOC
-    F = 0.5  # Fraction of methane in landfill gas
-    OX = 0.1  # Oxidation factor
-    Ri = 0.0  # Recovery factor
-    
-    # Constante de decomposição (k) para resíduos de jardim
-    k = 0.06  # ano^-1 (IPCC default for garden/yard waste)
-    
-    # Período de cálculo (anos)
-    t = 20  # anos
-    
-    massa_kg = massa_t * 1000
-    
-    # Cálculo FOD simplificado
-    # Geração total de CH4 potencial (sem decaimento)
-    ch4_potencial_total_kg = massa_kg * DOC * DOCf * mcf * F * (16/12) * (1 - Ri) * (1 - OX)
-    
-    # Fator de decomposição em t anos: (1 - e^(-k*t))
-    fator_decomposicao = 1 - np.exp(-k * t)
-    
-    # CH4 gerado em t anos
-    ch4_kg_20anos = ch4_potencial_total_kg * fator_decomposicao
-    ch4_t_20anos = ch4_kg_20anos / 1000
-    
-    # CH4 que seria gerado após 20 anos (restante)
-    ch4_restante_t = (ch4_potencial_total_kg * (1 - fator_decomposicao)) / 1000
-    
-    return ch4_t_20anos, ch4_restante_t
 
 # =========================================================
 # Carga do Excel
@@ -298,14 +257,17 @@ if not df_podas.empty:
     # Adicionar coluna de MCF à tabela (sem exibir)
     df_podas_destino["MCF"] = df_podas_destino[COL_DESTINO].apply(determinar_mcf_por_destino)
     
-    # Parâmetros para cálculo
+    # Parâmetros para cálculo (IPCC 2006)
     temperatura = 25.0  # Temperatura média anual em °C
+    DOC = 0.15  # Fraction of degradable organic carbon
+    DOCf = 0.0147 * temperatura + 0.28  # Decomposable fraction of DOC
+    F = 0.5  # Fraction of methane in landfill gas
+    OX = 0.1  # Oxidation factor
+    Ri = 0.0  # Recovery factor (sem recuperação de gás)
     
     # Lista para armazenar resultados detalhados
     resultados_emissoes = []
-    resultados_emissoes_20anos = []
     ch4_total_aterro_t = 0
-    ch4_total_20anos_t = 0
     massa_total_aterro_t = 0
     
     for _, row in df_podas_destino.iterrows():
@@ -315,23 +277,15 @@ if not df_podas.empty:
         
         # Só calcular emissões para destinos com MCF > 0 (aterros)
         if mcf > 0 and massa_t > 0:
-            # Emissões totais (ao longo de toda decomposição)
-            ch4_total_t = calcular_emissoes_aterro_total(massa_t, mcf, temperatura)
-            
-            # Emissões em 20 anos
-            ch4_20anos_t, ch4_restante_t = calcular_emissoes_aterro_20anos(massa_t, mcf, temperatura)
-            
-            ch4_total_aterro_t += ch4_total_t
-            ch4_total_20anos_t += ch4_20anos_t
+            ch4_t = calcular_emissoes_aterro(massa_t, mcf, temperatura)
+            ch4_total_aterro_t += ch4_t
             massa_total_aterro_t += massa_t
             
             resultados_emissoes.append({
                 "Destino": destino,
                 "Massa (t)": formatar_numero_br(massa_t),
                 "MCF": formatar_numero_br(mcf, 2),
-                "CH₄ Total (t)": formatar_numero_br(ch4_total_t, 3),
-                "CH₄ em 20 anos (t)": formatar_numero_br(ch4_20anos_t, 3),
-                "% em 20 anos": formatar_numero_br((ch4_20anos_t/ch4_total_t)*100 if ch4_total_t > 0 else 0, 1),
+                "CH₄ Gerado (t)": formatar_numero_br(ch4_t, 3),
                 "Tipo de Aterro": classificar_tipo_aterro(mcf)
             })
     
@@ -344,36 +298,13 @@ if not df_podas.empty:
         # =========================================================
         st.subheader("📊 Comparação: Aterro vs Tratamento Biológico")
         
-        # Adicionar seletor de horizonte temporal
-        col_tempo1, col_tempo2 = st.columns(2)
-        with col_tempo1:
-            horizonte_temporal = st.selectbox(
-                "Horizonte temporal para cálculo:",
-                ["Total (toda decomposição)", "20 anos"],
-                index=0
-            )
-        
-        with col_tempo2:
-            if horizonte_temporal == "20 anos":
-                st.info("🌍 Modelo FOD (First Order Decay) - IPCC 2006")
-            else:
-                st.info("📈 Método Tier 1 - IPCC 2006")
-        
-        # Escolher qual valor de CH4 usar baseado no horizonte selecionado
-        if horizonte_temporal == "20 anos":
-            ch4_aterro_usar_t = ch4_total_20anos_t
-            tempo_label = "em 20 anos"
-        else:
-            ch4_aterro_usar_t = ch4_total_aterro_t
-            tempo_label = "total"
-        
         # Calcular emissões do cenário de tratamento biológico
         massa_kg_total_aterro = massa_total_aterro_t * 1000
         ch4_comp_total_t = ch4_compostagem_total(massa_kg_total_aterro) / 1000
         ch4_vermi_total_t = ch4_vermicompostagem_total(massa_kg_total_aterro) / 1000
         
         # Emissões evitadas
-        ch4_evitado_t = ch4_aterro_usar_t - ch4_comp_total_t - ch4_vermi_total_t
+        ch4_evitado_t = ch4_total_aterro_t - ch4_comp_total_t - ch4_vermi_total_t
         
         # Calcular CO₂ equivalente (GWP100 do CH4 = 28, IPCC AR6)
         GWP100 = 28
@@ -391,17 +322,17 @@ if not df_podas.empty:
         
         with col2:
             st.metric(
-                f"CH₄ do aterro ({tempo_label})",
-                f"{formatar_numero_br(ch4_aterro_usar_t, 1)} t",
+                "CH₄ do aterro",
+                f"{formatar_numero_br(ch4_total_aterro_t, 1)} t",
                 delta=None,
-                help=f"CH₄ gerado em aterros {tempo_label}"
+                help="CH₄ gerado em aterros (considerando MCF específico por destino)"
             )
         
         with col3:
             st.metric(
                 "CH₄ evitado",
                 f"{formatar_numero_br(ch4_evitado_t, 1)} t",
-                delta=f"-{formatar_numero_br((ch4_evitado_t/ch4_aterro_usar_t)*100 if ch4_aterro_usar_t > 0 else 0, 1)}%",
+                delta=f"-{formatar_numero_br((ch4_evitado_t/ch4_total_aterro_t)*100 if ch4_total_aterro_t > 0 else 0, 1)}%",
                 delta_color="inverse",
                 help="Redução de CH₄ ao optar por tratamento biológico"
             )
@@ -428,16 +359,8 @@ if not df_podas.empty:
         
         df_resumo = pd.DataFrame(resultados_emissoes)
         if not df_resumo.empty:
-            # Usar os valores de 20 anos ou total conforme seleção
-            if horizonte_temporal == "20 anos":
-                col_ch4 = "CH₄ em 20 anos (t)"
-                titulo_ch4 = "CH₄ Gerado (t) - 20 anos"
-            else:
-                col_ch4 = "CH₄ Total (t)"
-                titulo_ch4 = "CH₄ Gerado (t) - Total"
-            
             df_resumo["Massa_num"] = df_resumo["Massa (t)"].apply(lambda x: to_float(x))
-            df_resumo["CH4_num"] = df_resumo[col_ch4].apply(lambda x: to_float(x))
+            df_resumo["CH4_num"] = df_resumo["CH₄ Gerado (t)"].apply(lambda x: to_float(x))
             
             resumo_agrupado = df_resumo.groupby("Tipo de Aterro").agg({
                 "Massa_num": "sum",
@@ -445,44 +368,13 @@ if not df_podas.empty:
             }).reset_index()
             
             resumo_agrupado["Massa (t)"] = resumo_agrupado["Massa_num"].apply(lambda x: formatar_numero_br(x))
-            resumo_agrupado[titulo_ch4] = resumo_agrupado["CH4_num"].apply(lambda x: formatar_numero_br(x, 1))
+            resumo_agrupado["CH₄ Gerado (t)"] = resumo_agrupado["CH4_num"].apply(lambda x: formatar_numero_br(x, 1))
             resumo_agrupado["CH₄ por t"] = resumo_agrupado.apply(
                 lambda row: formatar_numero_br(row["CH4_num"] / row["Massa_num"] if row["Massa_num"] > 0 else 0, 3), 
                 axis=1
             )
             
-            st.dataframe(resumo_agrupado[["Tipo de Aterro", "Massa (t)", titulo_ch4, "CH₄ por t"]], use_container_width=True)
-        
-        # =========================================================
-        # 📅 Comparativo Total vs 20 anos
-        # =========================================================
-        st.subheader("📅 Comparativo: Emissões Totais vs 20 anos")
-        
-        col_t1, col_t2, col_t3 = st.columns(3)
-        
-        with col_t1:
-            percentual_20anos = (ch4_total_20anos_t / ch4_total_aterro_t * 100) if ch4_total_aterro_t > 0 else 0
-            st.metric(
-                "CH₄ Total (toda decomposição)",
-                f"{formatar_numero_br(ch4_total_aterro_t, 1)} t",
-                help="Emissões totais ao longo de toda a decomposição"
-            )
-        
-        with col_t2:
-            st.metric(
-                "CH₄ em 20 anos",
-                f"{formatar_numero_br(ch4_total_20anos_t, 1)} t",
-                delta=f"{formatar_numero_br(percentual_20anos, 1)}% do total",
-                help="Emissões nos primeiros 20 anos (FOD - IPCC)"
-            )
-        
-        with col_t3:
-            ch4_apos_20anos = ch4_total_aterro_t - ch4_total_20anos_t
-            st.metric(
-                "CH₄ após 20 anos",
-                f"{formatar_numero_br(ch4_apos_20anos, 1)} t",
-                help="Emissões que ocorreriam após 20 anos"
-            )
+            st.dataframe(resumo_agrupado[["Tipo de Aterro", "Massa (t)", "CH₄ Gerado (t)", "CH₄ por t"]], use_container_width=True)
         
         # =========================================================
         # ℹ️ Notas Técnicas
@@ -504,27 +396,17 @@ if not df_podas.empty:
                - OX (Oxidation factor) = 0.1
                - Ri (Recovery factor) = 0.0 (sem recuperação de gás)
             
-            3. **Dois métodos de cálculo:**
-               - **Método Total (Tier 1)**: Calcula emissões totais ao longo de toda decomposição
-               - **Método 20 anos (FOD)**: Modelo First Order Decay - 85-90% das emissões ocorrem em 20 anos
+            3. **Emissões de tratamento biológico (Yang et al., 2017):**
+               - Compostagem: 0.0004 kg CH4/kg resíduo
+               - Vermicompostagem: 0.00015 kg CH4/kg resíduo
             
-            4. **Parâmetros FOD para resíduos de poda:**
-               - Constante de decomposição (k) = 0.06 ano⁻¹
-               - Fator decomposição 20 anos: 1 - e^(-0.06×20) = 0.70 (70%)
-               - Na prática: ~70-75% do CH4 total é gerado em 20 anos
-            
-            5. **Emissões de tratamento biológico (Yang et al., 2017):**
-               - Compostagem: 0.0004 kg CH4/kg resíduo (ocorre em semanas/meses)
-               - Vermicompostagem: 0.00015 kg CH4/kg resíduo (ocorre em semanas/meses)
-            
-            6. **Equivalência CO₂:**
+            4. **Equivalência CO₂:**
                - GWP100 do CH₄ = 28 (IPCC AR6, 2021)
             
             **Considerações para o contexto brasileiro:**
             - A maioria dos "aterros sanitários" no Brasil opera com MCF entre 0.6-0.8
             - Poucos aterros têm sistemas eficientes de coleta de biogás
             - Este cálculo considera o pior cenário (sem recuperação de gás)
-            - Para análises conservadoras, recomenda-se usar o cenário de 20 anos
             """)
     
     else:
