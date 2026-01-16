@@ -44,6 +44,19 @@ def normalizar_texto(txt):
     txt = txt.encode("ASCII", "ignore").decode("utf-8")
     return txt.upper().strip()
 
+def classificar_tipo_aterro(mcf):
+    """
+    Classifica o tipo de aterro baseado no valor do MCF.
+    """
+    if mcf >= 0.95:
+        return "Aterro Sanitário Gerenciado"
+    elif mcf >= 0.6:
+        return "Aterro Sanitário Não Gerenciado"
+    elif mcf > 0:
+        return "Aterro Controlado/Lixão"
+    else:
+        return "Não Aterro"
+
 # =========================================================
 # Funções de emissões de CH4 (script técnico anexo)
 # =========================================================
@@ -348,31 +361,20 @@ if not df_podas.empty:
         # =========================================================
         st.subheader("📈 Resumo por Categoria de Aterro")
         
-        # Agrupar por tipo de aterro
-        def classificar_tipo_aterro(mcf):
-            if mcf == 1.0:
-                return "Aterro Sanitário Gerenciado"
-            elif mcf == 0.8:
-                return "Aterro Sanitário Não Gerenciado"
-            elif mcf == 0.4:
-                return "Aterro Controlado/Lixão"
-            else:
-                return "Não Aterro"
+        # Converter string para float para agregação
+        def to_float(val):
+            if isinstance(val, str):
+                # Remover pontos de milhar e substituir vírgula decimal por ponto
+                val_clean = val.replace('.', '').replace(',', '.')
+                return float(val_clean)
+            return float(val)
         
         df_resumo = pd.DataFrame(resultados_emissoes)
         if not df_resumo.empty:
-            df_resumo["Categoria"] = df_resumo["MCF"].apply(lambda x: classificar_tipo_aterro(float(x.replace(',', '.')) if isinstance(x, str) else x))
-            
-            # Converter string para float para agregação
-            def to_float(val):
-                if isinstance(val, str):
-                    return float(val.replace('.', '').replace(',', '.'))
-                return float(val)
-            
             df_resumo["Massa_num"] = df_resumo["Massa (t)"].apply(lambda x: to_float(x))
             df_resumo["CH4_num"] = df_resumo["CH₄ Gerado (t)"].apply(lambda x: to_float(x))
             
-            resumo_agrupado = df_resumo.groupby("Categoria").agg({
+            resumo_agrupado = df_resumo.groupby("Tipo de Aterro").agg({
                 "Massa_num": "sum",
                 "CH4_num": "sum"
             }).reset_index()
@@ -384,7 +386,7 @@ if not df_podas.empty:
                 axis=1
             )
             
-            st.dataframe(resumo_agrupado[["Categoria", "Massa (t)", "CH₄ Gerado (t)", "CH₄ por t"]], use_container_width=True)
+            st.dataframe(resumo_agrupado[["Tipo de Aterro", "Massa (t)", "CH₄ Gerado (t)", "CH₄ por t"]], use_container_width=True)
         
         # =========================================================
         # ℹ️ Notas Técnicas
@@ -424,22 +426,6 @@ if not df_podas.empty:
     
 else:
     st.info("Não há dados de podas e galhadas para o município selecionado.")
-
-# =========================================================
-# Função auxiliar para classificar tipo de aterro (definida após uso)
-# =========================================================
-def classificar_tipo_aterro(mcf):
-    """
-    Classifica o tipo de aterro baseado no valor do MCF.
-    """
-    if mcf >= 0.95:
-        return "Aterro Sanitário Gerenciado"
-    elif mcf >= 0.6:
-        return "Aterro Sanitário Não Gerenciado"
-    elif mcf > 0:
-        return "Aterro Controlado/Lixão"
-    else:
-        return "Não Aterro"
 
 # =========================================================
 # Rodapé
