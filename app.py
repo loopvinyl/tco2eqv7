@@ -73,45 +73,19 @@ def obter_cotacao_euro_real():
         return 5.50, False
 
 # =========================================================
-# SIDEBAR – MERCADO DE CARBONO
+# OBTENÇÃO DAS COTAÇÕES (SESSION STATE)
 # =========================================================
-def exibir_cotacoes():
-    st.sidebar.header("💰 Mercado de Carbono")
-
-    if "preco_carbono" not in st.session_state:
-        st.session_state.preco_carbono, st.session_state.moeda, st.session_state.fonte = obter_cotacao_carbono()
-        st.session_state.eur_brl, _ = obter_cotacao_euro_real()
-
-    if st.sidebar.button("🔄 Atualizar cotações"):
-        st.session_state.preco_carbono, st.session_state.moeda, st.session_state.fonte = obter_cotacao_carbono()
-        st.session_state.eur_brl, _ = obter_cotacao_euro_real()
-        st.rerun()
-
-    st.sidebar.metric(
-        "Preço do Carbono (tCO₂eq)",
-        f"{st.session_state.moeda} {formatar_br(st.session_state.preco_carbono)}",
-        help=f"Fonte: {st.session_state.fonte}"
-    )
-
-    st.sidebar.metric(
-        "Euro (EUR/BRL)",
-        f"R$ {formatar_br(st.session_state.eur_brl)}"
-    )
-
-    st.sidebar.metric(
-        "Carbono em Reais",
-        f"R$ {formatar_br(st.session_state.preco_carbono * st.session_state.eur_brl)}"
-    )
-
-exibir_cotacoes()
+if "preco_carbono" not in st.session_state:
+    st.session_state.preco_carbono, st.session_state.moeda_carbono, st.session_state.fonte_carbono = obter_cotacao_carbono()
+    st.session_state.eur_brl, _ = obter_cotacao_euro_real()
 
 # =========================================================
 # TÍTULO
 # =========================================================
 st.title("🌱 Potencial de Compostagem e Vermicompostagem por Município")
 st.markdown(
-    "Avaliação técnica, ambiental e econômica do desvio de **podas e galhadas** "
-    "de aterros sanitários para **compostagem e vermicompostagem**."
+    "Avaliação técnica, ambiental e econômica do desvio de **podas e galhadas de áreas verdes públicas** "
+    "do **aterro sanitário** para **compostagem e vermicompostagem**."
 )
 
 # =========================================================
@@ -132,25 +106,20 @@ def load_data():
 df = load_data()
 
 # =========================================================
-# COLUNAS
+# COLUNAS (ESTRUTURA REAL DO EXCEL)
 # =========================================================
 COL_MUN = df.columns[2]
 COL_TIPO = df.columns[17]
 COL_MASSA = df.columns[24]
-COL_DESTINO = df.columns[28]  # AC
+COL_DESTINO = df.columns[28]  # Coluna AC
 
-# =========================================================
-# FILTRO BRASIL
-# =========================================================
 df["MASSA_FLOAT"] = pd.to_numeric(df[COL_MASSA], errors="coerce").fillna(0)
 
-df_brasil = df.copy()
-
 # =========================================================
-# PODAS E GALHADAS
+# FILTRO – PODAS E GALHADAS
 # =========================================================
-df_podas = df_brasil[
-    df_brasil[COL_TIPO]
+df_podas = df[
+    df[COL_TIPO]
     .astype(str)
     .str.contains("podas|galhadas|áreas verdes", case=False, na=False)
 ]
@@ -182,14 +151,16 @@ st.dataframe(
 # METANO – ATERRO SANITÁRIO
 # =========================================================
 df_aterro = df_podas[
-    df_podas[COL_DESTINO].astype(str).str.lower().str.contains("aterro sanit")
+    df_podas[COL_DESTINO]
+    .astype(str)
+    .str.lower()
+    .str.contains("aterro sanit")
 ]
 
 massa_aterro = df_aterro["MASSA_FLOAT"].sum()
 
-# Fatores (modelo técnico)
-FATOR_CH4 = 0.062      # tCH4 / t resíduo
-GWP_CH4 = 28           # IPCC AR5
+FATOR_CH4 = 0.062
+GWP_CH4 = 28
 
 ch4_gerado = massa_aterro * FATOR_CH4
 co2eq_aterro = ch4_gerado * GWP_CH4
@@ -197,10 +168,10 @@ co2eq_aterro = ch4_gerado * GWP_CH4
 st.subheader("🔥 Potencial de geração de metano (CH₄) – Aterro Sanitário")
 st.metric("Massa no aterro", formatar_massa(massa_aterro))
 st.metric("CH₄ potencial", f"{formatar_br(ch4_gerado)} t CH₄")
-st.metric("Emissões (tCO₂eq)", f"{formatar_br(co2eq_aterro)}")
+st.metric("Emissões", f"{formatar_br(co2eq_aterro)} tCO₂eq")
 
 # =========================================================
-# EMISSÕES EVITADAS – COMPOSTAGEM E VERMICOMPOSTAGEM
+# EMISSÕES EVITADAS
 # =========================================================
 RED_COMP = 0.90
 RED_VERMI = 0.95
@@ -208,42 +179,66 @@ RED_VERMI = 0.95
 evitado_comp = co2eq_aterro * RED_COMP
 evitado_vermi = co2eq_aterro * RED_VERMI
 
-st.subheader("♻️ Emissões Evitadas (desvio do aterro)")
+st.subheader("♻️ Emissões Evitadas pelo Desvio do Aterro")
 
 c1, c2 = st.columns(2)
 with c1:
-    st.metric("Compostagem (tCO₂eq)", formatar_br(evitado_comp))
+    st.metric("Compostagem", f"{formatar_br(evitado_comp)} tCO₂eq")
 with c2:
-    st.metric("Vermicompostagem (tCO₂eq)", formatar_br(evitado_vermi))
+    st.metric("Vermicompostagem", f"{formatar_br(evitado_vermi)} tCO₂eq")
+
+# =========================================================
+# CONVERSÃO DE tCO2eq PARA € E R$
+# =========================================================
+st.subheader("💱 Conversão de tCO₂eq para Euros e Reais")
+
+tab1, tab2 = st.tabs(["💰 Mercado de Carbono", "💱 Câmbio"])
+
+with tab1:
+    st.metric(
+        "Preço do Carbono (tCO₂eq)",
+        f"{st.session_state.moeda_carbono} {formatar_br(st.session_state.preco_carbono)}",
+        help=f"Fonte: {st.session_state.fonte_carbono}"
+    )
+
+with tab2:
+    st.metric(
+        "Euro (EUR → BRL)",
+        f"R$ {formatar_br(st.session_state.eur_brl)}"
+    )
+
+st.markdown(
+    f"**Preço do carbono em Reais:** R$ {formatar_br(st.session_state.preco_carbono * st.session_state.eur_brl)} / tCO₂eq"
+)
 
 # =========================================================
 # VALORAÇÃO ECONÔMICA – 20 ANOS
 # =========================================================
+st.subheader("💰 Valor Econômico das Emissões Evitadas (20 anos)")
+
 anos = 20
 preco = st.session_state.preco_carbono
 eurbrl = st.session_state.eur_brl
-
-st.subheader("💰 Valor Econômico das Emissões Evitadas (20 anos)")
 
 for nome, valor in {
     "Compostagem": evitado_comp,
     "Vermicompostagem": evitado_vermi
 }.items():
     total = valor * anos
-    eur = total * preco
-    brl = eur * eurbrl
+    valor_eur = total * preco
+    valor_brl = valor_eur * eurbrl
 
     st.markdown(f"### {nome}")
-    st.write(f"**tCO₂eq evitado:** {formatar_br(total)}")
-    st.write(f"**Valor (€):** € {formatar_br(eur)}")
-    st.write(f"**Valor (R$):** R$ {formatar_br(brl)}")
+    st.markdown(f"- **tCO₂eq evitado (20 anos):** {formatar_br(total)}")
+    st.markdown(f"- **Valor econômico (€):** € {formatar_br(valor_eur)}")
+    st.markdown(f"- **Valor econômico (R$):** R$ {formatar_br(valor_brl)}")
 
 # =========================================================
 # RODAPÉ
 # =========================================================
 st.markdown("---")
 st.caption(
-    "Cálculos de metano baseados em fatores médios IPCC. "
+    "Cálculos de metano baseados em fatores médios do IPCC. "
     "Preço do carbono e câmbio obtidos automaticamente em tempo real. "
-    "Resultados indicativos para planejamento e análise de viabilidade."
+    "Resultados indicativos para planejamento, análise de viabilidade e políticas públicas."
 )
