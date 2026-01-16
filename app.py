@@ -70,14 +70,9 @@ COL_TIPO_COLETA = "TIPO_COLETA_EXECUTADA"
 COL_MASSA = "MASSA_COLETADA"
 
 # =========================================================
-# Detectar automaticamente coluna de unidade de destino
+# 🔧 DEFINIÇÃO EXPLÍCITA DA COLUNA AC (Tipo de unidade de destino)
 # =========================================================
-COL_DESTINO = None
-for col in df.columns:
-    col_lower = col.lower()
-    if "unidade" in col_lower and "destin" in col_lower:
-        COL_DESTINO = col
-        break
+COL_DESTINO = df.columns[28]  # Coluna AC do Excel (linha 14 em diante)
 
 # =========================================================
 # Classificação técnica
@@ -161,11 +156,11 @@ for _, row in df_mun.iterrows():
 
 df_result = pd.DataFrame(resultados)
 
-# =========================================================
-# Exibição principal
-# =========================================================
 st.dataframe(df_result, use_container_width=True)
 
+# =========================================================
+# Síntese técnica
+# =========================================================
 st.subheader("📊 Síntese técnica")
 
 perc_comp = (massa_compostagem / total_massa * 100) if total_massa > 0 else 0
@@ -186,55 +181,53 @@ col3.metric(
 )
 
 # =========================================================
-# Painel – Podas e galhadas (áreas verdes públicas)
+# 🌳 Destinação das podas e galhadas de áreas verdes públicas
 # =========================================================
 st.markdown("---")
 st.subheader("🌳 Destinação das podas e galhadas de áreas verdes públicas")
 
-if COL_DESTINO is None:
-    st.warning("⚠️ Coluna de tipo de unidade de destino não encontrada no dataset.")
+df_podas = df_mun[
+    df_mun[COL_TIPO_COLETA]
+    .astype(str)
+    .str.lower()
+    .str.contains("áreas verdes públicas", na=False)
+].copy()
+
+if df_podas.empty:
+    st.info("ℹ️ Não há registros desse tipo de coleta para a seleção atual.")
 else:
-    df_podas = df_mun[
-        df_mun[COL_TIPO_COLETA].astype(str)
-        .str.lower()
-        .str.contains("áreas verdes públicas", na=False)
-    ].copy()
+    df_podas["MASSA_FLOAT"] = pd.to_numeric(
+        df_podas[COL_MASSA], errors="coerce"
+    ).fillna(0)
 
-    if df_podas.empty:
-        st.info("ℹ️ Não há registros desse tipo de coleta para a seleção atual.")
+    total_podas = df_podas["MASSA_FLOAT"].sum()
+
+    if total_podas == 0:
+        st.warning("⚠️ Massa total igual a zero para podas e galhadas.")
     else:
-        df_podas["MASSA_FLOAT"] = pd.to_numeric(
-            df_podas[COL_MASSA], errors="coerce"
-        ).fillna(0)
+        df_destino = (
+            df_podas
+            .groupby(COL_DESTINO, dropna=False)["MASSA_FLOAT"]
+            .sum()
+            .reset_index()
+        )
 
-        total_podas = df_podas["MASSA_FLOAT"].sum()
+        df_destino["Percentual (%)"] = df_destino["MASSA_FLOAT"] / total_podas * 100
+        df_destino["Massa (t)"] = df_destino["MASSA_FLOAT"].apply(
+            lambda x: formatar_numero_br(x)
+        )
+        df_destino["Percentual (%)"] = df_destino["Percentual (%)"].apply(
+            lambda x: formatar_numero_br(x)
+        )
 
-        if total_podas == 0:
-            st.warning("⚠️ Massa total igual a zero para podas e galhadas.")
-        else:
-            df_destino = (
-                df_podas
-                .groupby(COL_DESTINO, dropna=False)["MASSA_FLOAT"]
-                .sum()
-                .reset_index()
-            )
+        df_destino = df_destino[[COL_DESTINO, "Massa (t)", "Percentual (%)"]]
 
-            df_destino["Percentual (%)"] = df_destino["MASSA_FLOAT"] / total_podas * 100
-            df_destino["Massa (t)"] = df_destino["MASSA_FLOAT"].apply(
-                lambda x: formatar_numero_br(x)
-            )
-            df_destino["Percentual (%)"] = df_destino["Percentual (%)"].apply(
-                lambda x: formatar_numero_br(x)
-            )
+        st.metric(
+            "Massa total de podas e galhadas",
+            f"{formatar_numero_br(total_podas)} t"
+        )
 
-            df_destino = df_destino[[COL_DESTINO, "Massa (t)", "Percentual (%)"]]
-
-            st.metric(
-                "Massa total de podas e galhadas",
-                f"{formatar_numero_br(total_podas)} t"
-            )
-
-            st.dataframe(df_destino, use_container_width=True)
+        st.dataframe(df_destino, use_container_width=True)
 
 # =========================================================
 # Rodapé
@@ -244,4 +237,4 @@ st.caption(
     "Classificação baseada na origem do resíduo, grau de segregação "
     "e adequação ao tratamento biológico (compostagem/vermicompostagem)."
 )
-st.caption("Fonte: SNIS - Sistema Nacional de Informações sobre Saneamento")
+st.caption(f"Fonte: SNIS | Coluna de unidade de destino utilizada: {COL_DESTINO}")
