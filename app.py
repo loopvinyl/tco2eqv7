@@ -163,6 +163,13 @@ def formatar_br(numero):
     return f"{numero:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 # =============================================================================
+# PARÂMETROS DE PERÍODO - ADICIONADO
+# =============================================================================
+
+# Definir período de projeção (20 anos)
+ANOS_PROJECAO = 20
+
+# =============================================================================
 # FUNÇÕES AUXILIARES ORIGINAIS
 # =============================================================================
 
@@ -342,6 +349,27 @@ df_clean[COL_MUNICIPIO] = df_clean[COL_MUNICIPIO].astype(str).str.strip()
 municipios = ["BRASIL – Todos os municípios"] + sorted(df_clean[COL_MUNICIPIO].unique())
 municipio = st.selectbox("Selecione o município:", municipios)
 
+# =============================================================================
+# ADICIONADO: Controle de período de projeção
+# =============================================================================
+st.sidebar.markdown("---")
+st.sidebar.subheader("📅 Período de Projeção")
+anos_projecao = st.sidebar.slider(
+    "Anos de projeção",
+    min_value=1,
+    max_value=50,
+    value=ANOS_PROJECAO,
+    step=1,
+    help="Período total para cálculo das emissões evitadas"
+)
+
+st.sidebar.info(f"""
+**Configuração atual:**
+- Período de projeção: **{anos_projecao} anos**
+- Resultados mostram valores **acumulados** no período
+- Média anual = Total acumulado ÷ {anos_projecao}
+""")
+
 df_mun = df_clean.copy() if municipio == municipios[0] else df_clean[df_clean[COL_MUNICIPIO] == municipio]
 st.subheader("🇧🇷 Brasil — Síntese Nacional de RSU" if municipio == municipios[0] else f"📍 {municipio}")
 
@@ -449,45 +477,99 @@ if not df_podas.empty:
         ch4_comp_total_t = ch4_compostagem_total(massa_kg_total_aterro) / 1000
         ch4_vermi_total_t = ch4_vermicompostagem_total(massa_kg_total_aterro) / 1000
         
-        # Emissões evitadas
-        ch4_evitado_t = ch4_total_aterro_t - ch4_comp_total_t - ch4_vermi_total_t
+        # =============================================================================
+        # AJUSTE: CONSIDERAR PERÍODO DE 20 ANOS
+        # =============================================================================
+        # Multiplicar pela quantidade de anos para obter o total acumulado
+        ch4_total_aterro_t_acumulado = ch4_total_aterro_t * anos_projecao
+        ch4_comp_total_t_acumulado = ch4_comp_total_t * anos_projecao
+        ch4_vermi_total_t_acumulado = ch4_vermi_total_t * anos_projecao
+        massa_total_aterro_t_acumulado = massa_total_aterro_t * anos_projecao
+        
+        # Emissões evitadas acumuladas
+        ch4_evitado_t_acumulado = ch4_total_aterro_t_acumulado - ch4_comp_total_t_acumulado - ch4_vermi_total_t_acumulado
         
         # Calcular CO₂ equivalente (GWP100 do CH4 = 28, IPCC AR6)
         GWP100 = 28
-        co2eq_evitado_t = ch4_evitado_t * GWP100
+        co2eq_evitado_t_acumulado = ch4_evitado_t_acumulado * GWP100
         
-        # Métricas comparativas
+        # Calcular médias anuais
+        ch4_evitado_media_anual = ch4_evitado_t_acumulado / anos_projecao
+        co2eq_evitado_media_anual = co2eq_evitado_t_acumulado / anos_projecao
+        
+        # =============================================================================
+        # EXIBIÇÃO DOS RESULTADOS - COM ACUMULADO E MÉDIA ANUAL
+        # =============================================================================
+        
+        st.info(f"**Período considerado:** {anos_projecao} anos | **Massa anual de podas em aterros:** {formatar_numero_br(massa_total_aterro_t)} t")
+        
+        # Métricas acumuladas
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             st.metric(
-                "Massa em aterros",
-                f"{formatar_numero_br(massa_total_aterro_t)} t",
-                help="Total de podas destinadas a aterros (todos os tipos)"
+                f"Massa acumulada ({anos_projecao} anos)",
+                f"{formatar_numero_br(massa_total_aterro_t_acumulado)} t",
+                help=f"Total de podas destinadas a aterros em {anos_projecao} anos"
             )
         
         with col2:
             st.metric(
-                "CH₄ do aterro",
-                f"{formatar_numero_br(ch4_total_aterro_t, 1)} t",
+                f"CH₄ do aterro ({anos_projecao} anos)",
+                f"{formatar_numero_br(ch4_total_aterro_t_acumulado, 1)} t",
                 delta=None,
-                help="CH₄ gerado em aterros (considerando MCF específico por destino)"
+                help=f"CH₄ total gerado em aterros em {anos_projecao} anos"
             )
         
         with col3:
             st.metric(
-                "CH₄ evitado",
-                f"{formatar_numero_br(ch4_evitado_t, 1)} t",
-                delta=f"-{formatar_numero_br((ch4_evitado_t/ch4_total_aterro_t)*100 if ch4_total_aterro_t > 0 else 0, 1)}%",
+                f"CH₄ evitado acumulado",
+                f"{formatar_numero_br(ch4_evitado_t_acumulado, 1)} t",
+                delta=f"-{formatar_numero_br((ch4_evitado_t_acumulado/ch4_total_aterro_t_acumulado)*100 if ch4_total_aterro_t_acumulado > 0 else 0, 1)}%",
                 delta_color="inverse",
-                help="Redução de CH₄ ao optar por tratamento biológico"
+                help=f"Redução total de CH₄ em {anos_projecao} anos ao optar por tratamento biológico"
             )
         
         with col4:
             st.metric(
-                "CO₂e evitado",
-                f"{formatar_numero_br(co2eq_evitado_t, 1)} t CO₂e",
-                help=f"Equivalente em CO₂ (GWP100 = {GWP100})"
+                f"CO₂e evitado acumulado",
+                f"{formatar_numero_br(co2eq_evitado_t_acumulado, 1)} t CO₂e",
+                help=f"Equivalente total em CO₂ (GWP100 = {GWP100}) em {anos_projecao} anos"
+            )
+        
+        # Métricas anuais
+        st.subheader("📈 Métricas Anuais (Média)")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "Massa anual média",
+                f"{formatar_numero_br(massa_total_aterro_t)} t/ano",
+                help="Média anual de podas destinadas a aterros"
+            )
+        
+        with col2:
+            st.metric(
+                "CH₄ do aterro (anual)",
+                f"{formatar_numero_br(ch4_total_aterro_t, 1)} t/ano",
+                help="CH₄ gerado anualmente em aterros"
+            )
+        
+        with col3:
+            st.metric(
+                "CH₄ evitado (anual)",
+                f"{formatar_numero_br(ch4_evitado_media_anual, 1)} t/ano",
+                delta=f"-{formatar_numero_br((ch4_evitado_media_anual/ch4_total_aterro_t)*100 if ch4_total_aterro_t > 0 else 0, 1)}%/ano",
+                delta_color="inverse",
+                help="Redução média anual de CH₄"
+            )
+        
+        with col4:
+            st.metric(
+                "CO₂e evitado (anual)",
+                f"{formatar_numero_br(co2eq_evitado_media_anual, 1)} t CO₂e/ano",
+                help="Equivalente anual médio em CO₂"
             )
         
         # =============================================================================
@@ -530,52 +612,82 @@ if not df_podas.empty:
             )
         
         # =============================================================================
-        # VALOR FINANCEIRO DAS EMISSÕES EVITADAS
+        # VALOR FINANCEIRO DAS EMISSÕES EVITADAS - ACUMULADO E ANUAL
         # =============================================================================
         st.subheader("💵 Valor Financeiro do CO₂e Evitado")
         
-        # Calcular valores financeiros
-        valor_euros = calcular_valor_creditos(co2eq_evitado_t, preco_carbono, moeda_carbono)
-        valor_reais = calcular_valor_creditos(co2eq_evitado_t, preco_carbono, "R$", taxa_cambio)
+        # Calcular valores financeiros ACUMULADOS
+        valor_euros_acumulado = calcular_valor_creditos(co2eq_evitado_t_acumulado, preco_carbono, moeda_carbono)
+        valor_reais_acumulado = calcular_valor_creditos(co2eq_evitado_t_acumulado, preco_carbono, "R$", taxa_cambio)
         
+        # Calcular valores financeiros ANUAIS
+        valor_euros_anual = valor_euros_acumulado / anos_projecao
+        valor_reais_anual = valor_reais_acumulado / anos_projecao
+        
+        st.info(f"**Período:** {anos_projecao} anos | **Preço carbono:** {moeda_carbono} {formatar_br(preco_carbono)}/tCO₂eq")
+        
+        # Valores acumulados
         col1, col2 = st.columns(2)
         
         with col1:
             st.metric(
-                "Valor em Euros",
-                f"{moeda_carbono} {formatar_br(valor_euros)}",
-                help=f"Baseado em {formatar_br(co2eq_evitado_t)} tCO₂eq evitadas"
+                f"Valor acumulado em Euros ({anos_projecao} anos)",
+                f"{moeda_carbono} {formatar_br(valor_euros_acumulado)}",
+                help=f"Baseado em {formatar_numero_br(co2eq_evitado_t_acumulado)} tCO₂eq evitadas acumuladas"
             )
         
         with col2:
             st.metric(
-                "Valor em Reais",
-                f"R$ {formatar_br(valor_reais)}",
-                help=f"Baseado em {formatar_br(co2eq_evitado_t)} tCO₂eq evitadas"
+                f"Valor acumulado em Reais ({anos_projecao} anos)",
+                f"R$ {formatar_br(valor_reais_acumulado)}",
+                help=f"Baseado em {formatar_numero_br(co2eq_evitado_t_acumulado)} tCO₂eq evitadas acumuladas"
+            )
+        
+        # Valores anuais
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric(
+                "Valor anual médio em Euros",
+                f"{moeda_carbono} {formatar_br(valor_euros_anual)}/ano",
+                help="Média anual do valor das emissões evitadas"
+            )
+        
+        with col2:
+            st.metric(
+                "Valor anual médio em Reais",
+                f"R$ {formatar_br(valor_reais_anual)}/ano",
+                help="Média anual do valor das emissões evitadas"
             )
         
         # Explicação sobre compra e venda
         with st.expander("💡 Como funciona a comercialização no mercado de carbono?"):
             st.markdown(f"""
             **📊 Informações de Mercado Atuais:**
+            - **Período de projeção:** {anos_projecao} anos
             - **Preço do Carbono (Euro):** {moeda_carbono} {formatar_br(preco_carbono)}/tCO₂eq
             - **Preço do Carbono (Real):** R$ {formatar_br(preco_carbono_reais)}/tCO₂eq
             - **Taxa de câmbio:** 1 Euro = R$ {formatar_br(taxa_cambio)}
             - **Fonte Carbono:** {fonte_carbono}
             - **Fonte Câmbio:** {fonte_euro}
             
-            **💶 Comprar créditos (compensação):**
-            - Custo em Euro: **{moeda_carbono} {formatar_br(valor_euros)}**
-            - Custo em Real: **R$ {formatar_br(valor_reais)}**
+            **💶 Comprar créditos (compensação - {anos_projecao} anos):**
+            - Custo total em Euro: **{moeda_carbono} {formatar_br(valor_euros_acumulado)}**
+            - Custo total em Real: **R$ {formatar_br(valor_reais_acumulado)}**
+            - Custo anual médio em Euro: **{moeda_carbono} {formatar_br(valor_euros_anual)}/ano**
+            - Custo anual médio em Real: **R$ {formatar_br(valor_reais_anual)}/ano**
             
-            **💵 Vender créditos (comercialização):**  
-            - Receita em Euro: **{moeda_carbono} {formatar_br(valor_euros)}**
-            - Receita em Real: **R$ {formatar_br(valor_reais)}**
+            **💵 Vender créditos (comercialização - {anos_projecao} anos):**  
+            - Receita total em Euro: **{moeda_carbono} {formatar_br(valor_euros_acumulado)}**
+            - Receita total em Real: **R$ {formatar_br(valor_reais_acumulado)}**
+            - Receita anual média em Euro: **{moeda_carbono} {formatar_br(valor_euros_anual)}/ano**
+            - Receita anual média em Real: **R$ {formatar_br(valor_reais_anual)}/ano**
             
-            **📈 Potencial de Geração Anual:**
-            - CO₂e evitado por ano: **{formatar_br(co2eq_evitado_t)} tCO₂eq**
-            - Valor anual em Euros: **{moeda_carbono} {formatar_br(valor_euros)}**
-            - Valor anual em Reais: **R$ {formatar_br(valor_reais)}**
+            **📈 Potencial de Geração:**
+            - CO₂e evitado acumulado ({anos_projecao} anos): **{formatar_numero_br(co2eq_evitado_t_acumulado)} tCO₂eq**
+            - CO₂e evitado anual (média): **{formatar_numero_br(co2eq_evitado_media_anual)} tCO₂eq/ano**
+            - Valor acumulado em Euros: **{moeda_carbono} {formatar_br(valor_euros_acumulado)}**
+            - Valor acumulado em Reais: **R$ {formatar_br(valor_reais_acumulado)}**
             
             **🌍 Mercado de Referência:**
             - European Union Allowances (EUA)
@@ -585,9 +697,9 @@ if not df_podas.empty:
             """)
         
         # =========================================================
-        # 📈 Resumo por Tipo de Aterro
+        # 📈 Resumo por Tipo de Aterro (ANUAL)
         # =========================================================
-        st.subheader("📈 Resumo por Categoria de Aterro")
+        st.subheader("📈 Resumo por Categoria de Aterro (Dados Anuais)")
         
         # Converter string para float para agregação
         def to_float(val):
@@ -607,14 +719,17 @@ if not df_podas.empty:
                 "CH4_num": "sum"
             }).reset_index()
             
-            resumo_agrupado["Massa (t)"] = resumo_agrupado["Massa_num"].apply(lambda x: formatar_numero_br(x))
-            resumo_agrupado["CH₄ Gerado (t)"] = resumo_agrupado["CH4_num"].apply(lambda x: formatar_numero_br(x, 1))
+            resumo_agrupado["Massa (t/ano)"] = resumo_agrupado["Massa_num"].apply(lambda x: formatar_numero_br(x))
+            resumo_agrupado["CH₄ Gerado (t/ano)"] = resumo_agrupado["CH4_num"].apply(lambda x: formatar_numero_br(x, 1))
             resumo_agrupado["CH₄ por t"] = resumo_agrupado.apply(
                 lambda row: formatar_numero_br(row["CH4_num"] / row["Massa_num"] if row["Massa_num"] > 0 else 0, 3), 
                 axis=1
             )
             
-            st.dataframe(resumo_agrupado[["Tipo de Aterro", "Massa (t)", "CH₄ Gerado (t)", "CH₄ por t"]], use_container_width=True)
+            st.dataframe(resumo_agrupado[["Tipo de Aterro", "Massa (t/ano)", "CH₄ Gerado (t/ano)", "CH₄ por t"]], use_container_width=True)
+            
+            # Adicionar nota sobre projeção
+            st.caption(f"*Nota: Para {anos_projecao} anos, multiplique os valores acima por {anos_projecao} para obter os totais acumulados*")
         
         # =========================================================
         # ℹ️ Notas Técnicas
@@ -624,26 +739,28 @@ if not df_podas.empty:
             st.markdown(f"""
             **Metodologia de Cálculo:**
             
-            1. **Fator de Correção de Metano (MCF):**
+            1. **Período de Projeção:** {anos_projecao} anos
+            2. **Massa Considerada:** Dados anuais do SNIS multiplicados por {anos_projecao} anos
+            3. **Fator de Correção de Metano (MCF):**
                - **MCF = 1.0**: Aterro sanitário gerenciado com cobertura diária e sistema de coleta de gás
                - **MCF = 0.8**: Aterro sanitário não gerenciado (sem coleta de gás, mas com cobertura)
                - **MCF = 0.4**: Aterro controlado ou lixão (sem cobertura sistemática)
             
-            2. **Parâmetros IPCC 2006 para resíduos de poda:**
+            4. **Parâmetros IPCC 2006 para resíduos de poda:**
                - DOC (Degradable Organic Carbon) = 0.15
                - DOCf = 0.0147 × Temperatura(°C) + 0.28
                - F (Fraction of CH4 in landfill gas) = 0.5
                - OX (Oxidation factor) = 0.1
                - Ri (Recovery factor) = 0.0 (sem recuperação de gás)
             
-            3. **Emissões de tratamento biológico (Yang et al., 2017):**
+            5. **Emissões de tratamento biológico (Yang et al., 2017):**
                - Compostagem: 0.0004 kg CH4/kg resíduo
                - Vermicompostagem: 0.00015 kg CH4/kg resíduo
             
-            4. **Equivalência CO₂:**
+            6. **Equivalência CO₂:**
                - GWP100 do CH₄ = 28 (IPCC AR6, 2021)
             
-            5. **Cotação do Carbono:**
+            7. **Cotação do Carbono:**
                - Preço atual: {moeda_carbono} {formatar_br(preco_carbono)}/tCO₂eq
                - Fonte: {fonte_carbono}
                - Câmbio EUR/BRL: R$ {formatar_br(taxa_cambio)}
@@ -653,6 +770,7 @@ if not df_podas.empty:
             - Poucos aterros têm sistemas eficientes de coleta de biogás
             - Este cálculo considera o pior cenário (sem recuperação de gás)
             - As cotações são atualizadas automaticamente ao acessar o aplicativo
+            - Valores acumulados representam a projeção para {anos_projecao} anos
             """)
     
     else:
@@ -665,4 +783,4 @@ else:
 # Rodapé
 # =========================================================
 st.markdown("---")
-st.caption("Fonte: SNIS – Sistema Nacional de Informações sobre Saneamento | Metodologia: IPCC 2006, Yang et al. (2017) | Cotações atualizadas automaticamente via Investing.com e APIs de câmbio")
+st.caption(f"Fonte: SNIS – Sistema Nacional de Informações sobre Saneamento | Metodologia: IPCC 2006, Yang et al. (2017) | Período: {anos_projecao} anos | Cotações atualizadas automaticamente via Investing.com e APIs de câmbio")
