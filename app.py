@@ -1,6 +1,10 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import unicodedata
+import requests
+from bs4 import BeautifulSoup
+import re
 
 # =========================================================
 # Configuração da página
@@ -17,9 +21,151 @@ e avalia o **potencial técnico para compostagem e vermicompostagem**
 de resíduos sólidos urbanos.
 """)
 
-# =========================================================
-# Funções auxiliares
-# =========================================================
+# =============================================================================
+# FUNÇÕES DE COTAÇÃO AUTOMÁTICA DO CARBONO E CÂMBIO
+# =============================================================================
+
+def obter_cotacao_carbono_investing():
+    """
+    Obtém a cotação em tempo real do carbono via web scraping do Investing.com
+    """
+    try:
+        url = "https://www.investing.com/commodities/carbon-emissions"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Referer': 'https://www.investing.com/'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Várias estratégias para encontrar o preço
+        selectores = [
+            '[data-test="instrument-price-last"]',
+            '.text-2xl',
+            '.last-price-value',
+            '.instrument-price-last',
+            '.pid-1062510-last',
+            '.float_lang_base_1',
+            '.top.bold.inlineblock',
+            '#last_last'
+        ]
+        
+        preco = None
+        fonte = "Investing.com"
+        
+        for seletor in selectores:
+            try:
+                elemento = soup.select_one(seletor)
+                if elemento:
+                    texto_preco = elemento.text.strip().replace(',', '')
+                    # Remover caracteres não numéricos exceto ponto
+                    texto_preco = ''.join(c for c in texto_preco if c.isdigit() or c == '.')
+                    if texto_preco:
+                        preco = float(texto_preco)
+                        break
+            except (ValueError, AttributeError):
+                continue
+        
+        if preco is not None:
+            return preco, "€", "Carbon Emissions Future", True, fonte
+        
+        # Tentativa alternativa: procurar por padrões numéricos no HTML
+        padroes_preco = [
+            r'"last":"([\d,]+)"',
+            r'data-last="([\d,]+)"',
+            r'last_price["\']?:\s*["\']?([\d,]+)',
+            r'value["\']?:\s*["\']?([\d,]+)'
+        ]
+        
+        html_texto = str(soup)
+        for padrao in padroes_preco:
+            matches = re.findall(padrao, html_texto)
+            for match in matches:
+                try:
+                    preco_texto = match.replace(',', '')
+                    preco = float(preco_texto)
+                    if 50 < preco < 200:  # Faixa razoável para carbono
+                        return preco, "€", "Carbon Emissions Future", True, fonte
+                except ValueError:
+                    continue
+                    
+        return None, None, None, False, fonte
+        
+    except Exception as e:
+        return None, None, None, False, f"Investing.com - Erro: {str(e)}"
+
+def obter_cotacao_carbono():
+    """
+    Obtém a cotação em tempo real do carbono - usa apenas Investing.com
+    """
+    # Tentar via Investing.com
+    preco, moeda, contrato_info, sucesso, fonte = obter_cotacao_carbono_investing()
+    
+    if sucesso:
+        return preco, moeda, f"{contrato_info}", True, fonte
+    
+    # Fallback para valor padrão
+    return 85.50, "€", "Carbon Emissions (Referência)", False, "Referência"
+
+def obter_cotacao_euro_real():
+    """
+    Obtém a cotação em tempo real do Euro em relação ao Real Brasileiro
+    """
+    try:
+        # API do BCB
+        url = "https://economia.awesomeapi.com.br/last/EUR-BRL"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            cotacao = float(data['EURBRL']['bid'])
+            return cotacao, "R$", True, "AwesomeAPI"
+    except:
+        pass
+    
+    try:
+        # Fallback para API alternativa
+        url = "https://api.exchangerate-api.com/v4/latest/EUR"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            cotacao = data['rates']['BRL']
+            return cotacao, "R$", True, "ExchangeRate-API"
+    except:
+        pass
+    
+    # Fallback para valor de referência
+    return 5.50, "R$", False, "Referência"
+
+def calcular_valor_creditos(emissoes_evitadas_tco2eq, preco_carbono_por_tonelada, moeda, taxa_cambio=1):
+    """
+    Calcula o valor financeiro das emissões evitadas baseado no preço do carbono
+    """
+    valor_total = emissoes_evitadas_tco2eq * preco_carbono_por_tonelada * taxa_cambio
+    return valor_total
+
+# Função para formatar números no padrão brasileiro
+def formatar_br(numero):
+    """
+    Formata números no padrão brasileiro: 1.234,56
+    """
+    if pd.isna(numero) or numero is None:
+        return "N/A"
+    
+    # Arredonda para 2 casas decimais
+    numero = round(numero, 2)
+    
+    # Formata como string e substitui o ponto pela vírgula
+    return f"{numero:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+# =============================================================================
+# FUNÇÕES AUXILIARES ORIGINAIS
+# =============================================================================
+
 def formatar_numero_br(valor, casas_decimais=2):
     if pd.isna(valor) or valor is None:
         return "Não informado"
@@ -344,6 +490,100 @@ if not df_podas.empty:
                 help=f"Equivalente em CO₂ (GWP100 = {GWP100})"
             )
         
+        # =============================================================================
+        # SEÇÃO DE COTAÇÃO AUTOMÁTICA DO CARBONO (ADICIONADA APÓS CO₂e EVITADO)
+        # =============================================================================
+        st.markdown("---")
+        st.subheader("💰 Mercado de Carbono - Valor Financeiro das Emissões Evitadas")
+        
+        # Obter cotações automaticamente
+        with st.spinner("🔄 Obtendo cotações em tempo real..."):
+            # Obter cotação do carbono
+            preco_carbono, moeda_carbono, contrato_info, sucesso_carbono, fonte_carbono = obter_cotacao_carbono()
+            
+            # Obter cotação do Euro
+            taxa_cambio, moeda_real, sucesso_euro, fonte_euro = obter_cotacao_euro_real()
+        
+        # Exibir cotações atuais
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric(
+                label=f"Preço do Carbono (tCO₂eq)",
+                value=f"{moeda_carbono} {formatar_br(preco_carbono)}",
+                help=f"Fonte: {fonte_carbono}"
+            )
+        
+        with col2:
+            st.metric(
+                label="Euro (EUR/BRL)",
+                value=f"{moeda_real} {formatar_br(taxa_cambio)}",
+                help=f"Fonte: {fonte_euro}"
+            )
+        
+        with col3:
+            preco_carbono_reais = preco_carbono * taxa_cambio
+            st.metric(
+                label=f"Carbono em Reais (tCO₂eq)",
+                value=f"R$ {formatar_br(preco_carbono_reais)}",
+                help="Preço do carbono convertido para Reais Brasileiros"
+            )
+        
+        # =============================================================================
+        # VALOR FINANCEIRO DAS EMISSÕES EVITADAS
+        # =============================================================================
+        st.subheader("💵 Valor Financeiro do CO₂e Evitado")
+        
+        # Calcular valores financeiros
+        valor_euros = calcular_valor_creditos(co2eq_evitado_t, preco_carbono, moeda_carbono)
+        valor_reais = calcular_valor_creditos(co2eq_evitado_t, preco_carbono, "R$", taxa_cambio)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric(
+                "Valor em Euros",
+                f"{moeda_carbono} {formatar_br(valor_euros)}",
+                help=f"Baseado em {formatar_br(co2eq_evitado_t)} tCO₂eq evitadas"
+            )
+        
+        with col2:
+            st.metric(
+                "Valor em Reais",
+                f"R$ {formatar_br(valor_reais)}",
+                help=f"Baseado em {formatar_br(co2eq_evitado_t)} tCO₂eq evitadas"
+            )
+        
+        # Explicação sobre compra e venda
+        with st.expander("💡 Como funciona a comercialização no mercado de carbono?"):
+            st.markdown(f"""
+            **📊 Informações de Mercado Atuais:**
+            - **Preço do Carbono (Euro):** {moeda_carbono} {formatar_br(preco_carbono)}/tCO₂eq
+            - **Preço do Carbono (Real):** R$ {formatar_br(preco_carbono_reais)}/tCO₂eq
+            - **Taxa de câmbio:** 1 Euro = R$ {formatar_br(taxa_cambio)}
+            - **Fonte Carbono:** {fonte_carbono}
+            - **Fonte Câmbio:** {fonte_euro}
+            
+            **💶 Comprar créditos (compensação):**
+            - Custo em Euro: **{moeda_carbono} {formatar_br(valor_euros)}**
+            - Custo em Real: **R$ {formatar_br(valor_reais)}**
+            
+            **💵 Vender créditos (comercialização):**  
+            - Receita em Euro: **{moeda_carbono} {formatar_br(valor_euros)}**
+            - Receita em Real: **R$ {formatar_br(valor_reais)}**
+            
+            **📈 Potencial de Geração Anual:**
+            - CO₂e evitado por ano: **{formatar_br(co2eq_evitado_t)} tCO₂eq**
+            - Valor anual em Euros: **{moeda_carbono} {formatar_br(valor_euros)}**
+            - Valor anual em Reais: **R$ {formatar_br(valor_reais)}**
+            
+            **🌍 Mercado de Referência:**
+            - European Union Allowances (EUA)
+            - European Emissions Trading System (EU ETS)
+            - Contratos futuros de carbono
+            - Preços em tempo real do mercado regulado
+            """)
+        
         # =========================================================
         # 📈 Resumo por Tipo de Aterro
         # =========================================================
@@ -381,7 +621,7 @@ if not df_podas.empty:
         # =========================================================
         st.markdown("---")
         with st.expander("📋 Notas Técnicas sobre os Cálculos"):
-            st.markdown("""
+            st.markdown(f"""
             **Metodologia de Cálculo:**
             
             1. **Fator de Correção de Metano (MCF):**
@@ -403,10 +643,16 @@ if not df_podas.empty:
             4. **Equivalência CO₂:**
                - GWP100 do CH₄ = 28 (IPCC AR6, 2021)
             
+            5. **Cotação do Carbono:**
+               - Preço atual: {moeda_carbono} {formatar_br(preco_carbono)}/tCO₂eq
+               - Fonte: {fonte_carbono}
+               - Câmbio EUR/BRL: R$ {formatar_br(taxa_cambio)}
+            
             **Considerações para o contexto brasileiro:**
             - A maioria dos "aterros sanitários" no Brasil opera com MCF entre 0.6-0.8
             - Poucos aterros têm sistemas eficientes de coleta de biogás
             - Este cálculo considera o pior cenário (sem recuperação de gás)
+            - As cotações são atualizadas automaticamente ao acessar o aplicativo
             """)
     
     else:
@@ -419,4 +665,4 @@ else:
 # Rodapé
 # =========================================================
 st.markdown("---")
-st.caption("Fonte: SNIS – Sistema Nacional de Informações sobre Saneamento | Metodologia: IPCC 2006, Yang et al. (2017)")
+st.caption("Fonte: SNIS – Sistema Nacional de Informações sobre Saneamento | Metodologia: IPCC 2006, Yang et al. (2017) | Cotações atualizadas automaticamente via Investing.com e APIs de câmbio")
