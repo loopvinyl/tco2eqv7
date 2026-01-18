@@ -350,7 +350,7 @@ def calcular_emissoes_compostagem_entrada_continua(massa_kg_dia, dias_simulacao=
     # Convolução para distribuir emissões ACUMULADAS
     emissoes_CH4 = fftconvolve(entradas_diarias, kernel_compost, mode='full')[:dias_simulacao]
     
-    return emissoes_CH4  # kg CH4 por dia
+    return emissoes_CH4  # kg CH4 per day
 
 def calcular_emissoes_vermicompostagem_entrada_continua(massa_kg_dia, dias_simulacao=DIAS_PROJECAO):
     """
@@ -379,7 +379,7 @@ def calcular_emissoes_vermicompostagem_entrada_continua(massa_kg_dia, dias_simul
     # Fator de conversão C para CH4
     fator_C_para_CH4 = 16/12
     
-    # Emissão total por lote (por dia de entrada)
+    # Emissão total per lote (per day of entry)
     ch4_por_lote_kg = massa_kg_dia * TOC_YANG * CH4_C_FRAC_YANG * fator_C_para_CH4
     
     # Kernel para vermicompostagem (50 dias)
@@ -391,7 +391,7 @@ def calcular_emissoes_vermicompostagem_entrada_continua(massa_kg_dia, dias_simul
     # Convolução para distribuir emissões ACUMULADAS
     emissoes_CH4 = fftconvolve(entradas_diarias, kernel_vermi, mode='full')[:dias_simulacao]
     
-    return emissoes_CH4  # kg CH4 por dia
+    return emissoes_CH4  # kg CH4 per day
 
 def calcular_emissoes_totais_entrada_continua(massa_t_ano, mcf):
     """
@@ -624,10 +624,158 @@ for _, row in df_mun.iterrows():
 
 st.dataframe(pd.DataFrame(resultados), use_container_width=True)
 
-# =========================================================
-# 🌳 Destinação das podas e galhadas
-# =========================================================
+# ============================================================
+# ♻️ DESTINAÇÃO DA COLETA SELETIVA DE RESÍDUOS ORGÂNICOS
+# ============================================================
 st.markdown("---")
+st.subheader("♻️ Destinação da Coleta Seletiva de Resíduos Orgânicos")
+
+# Filtrar apenas os registros de coleta seletiva de orgânicos
+df_organicos = df_mun[df_mun[COL_TIPO_COLETA].astype(str).str.contains(
+    "seletiva.*orgânico|orgânico.*seletiva", 
+    case=False, 
+    na=False, 
+    regex=True
+)].copy()
+
+if not df_organicos.empty:
+    # Calcular massa total de orgânicos coletados seletivamente
+    df_organicos["MASSA_FLOAT"] = pd.to_numeric(df_organicos[COL_MASSA], errors="coerce").fillna(0)
+    total_organicos = df_organicos["MASSA_FLOAT"].sum()
+    
+    st.metric("Massa total de orgânicos coletados seletivamente", f"{formatar_numero_br(total_organicos)} t")
+    
+    # Agrupar por destino
+    df_organicos_destino = df_organicos.groupby(COL_DESTINO)["MASSA_FLOAT"].sum().reset_index()
+    df_organicos_destino["Percentual (%)"] = df_organicos_destino["MASSA_FLOAT"] / total_organicos * 100
+    df_organicos_destino = df_organicos_destino.sort_values("Percentual (%)", ascending=False)
+    
+    # Formatar para exibição
+    df_view_organicos = df_organicos_destino.copy()
+    df_view_organicos["Massa (t)"] = df_view_organicos["MASSA_FLOAT"].apply(formatar_numero_br)
+    df_view_organicos["Percentual (%)"] = df_view_organicos["Percentual (%)"].apply(lambda x: formatar_numero_br(x, 1))
+    
+    st.dataframe(df_view_organicos[[COL_DESTINO, "Massa (t)", "Percentual (%)"]], use_container_width=True)
+    
+    # =========================================================
+    # 🔥 Cálculo detalhado de emissões por tipo de destino (orgânicos)
+    # =========================================================
+    st.subheader("🔥 Cálculo Detalhado de Emissões de CH₄ por Tipo de Destino (Orgânicos)")
+    
+    # Adicionar coluna de MCF à tabela
+    df_organicos_destino["MCF"] = df_organicos_destino[COL_DESTINO].apply(determinar_mcf_por_destino)
+    
+    # Lista para armazenar resultados detalhados
+    resultados_emissoes_organicos = []
+    ch4_total_aterro_t_simplificado_organicos = 0
+    massa_total_aterro_t_organicos = 0
+    
+    for _, row in df_organicos_destino.iterrows():
+        destino = row[COL_DESTINO]
+        massa_t = row["MASSA_FLOAT"]
+        mcf = row["MCF"]
+        
+        # Só calcular emissões para destinos com MCF > 0 (aterros)
+        if mcf > 0 and massa_t > 0:
+            # Cálculo simplificado (para exibição na tabela)
+            massa_kg = massa_t * 1000
+            DOCf = 0.0147 * T + 0.28
+            ch4_kg = massa_kg * DOC * DOCf * mcf * F * (16/12) * (1 - Ri) * (1 - OX)
+            ch4_t_simplificado = ch4_kg / 1000
+            
+            ch4_total_aterro_t_simplificado_organicos += ch4_t_simplificado
+            massa_total_aterro_t_organicos += massa_t
+            
+            resultados_emissoes_organicos.append({
+                "Destino": destino,
+                "Massa (t)": formatar_numero_br(massa_t),
+                "MCF": formatar_numero_br(mcf, 2),
+                "CH₄ Gerado (t) - Potencial": formatar_numero_br(ch4_t_simplificado, 3),
+                "Tipo de Aterro": classificar_tipo_aterro(mcf)
+            })
+    
+    # Se houver emissões de aterro, mostrar resultados
+    if resultados_emissoes_organicos:
+        st.dataframe(pd.DataFrame(resultados_emissoes_organicos), use_container_width=True)
+        
+        # =========================================================
+        # 📊 Comparação com Cenário de Tratamento Biológico (orgânicos)
+        # =========================================================
+        st.subheader("📊 Comparação: Aterro vs Tratamento Biológico (Orgânicos)")
+        
+        # Calcular emissões do cenário de tratamento biológico (simplificado)
+        massa_kg_total_aterro_organicos = massa_total_aterro_t_organicos * 1000
+        ch4_comp_total_t_simplificado_organicos = massa_kg_total_aterro_organicos * 0.0004 / 1000  # Compostagem
+        ch4_vermi_total_t_simplificado_organicos = massa_kg_total_aterro_organicos * 0.00015 / 1000  # Vermicompostagem
+        
+        # Emissões evitadas (simplificado)
+        ch4_evitado_t_simplificado_comp_organicos = ch4_total_aterro_t_simplificado_organicos - ch4_comp_total_t_simplificado_organicos
+        ch4_evitado_t_simplificado_vermi_organicos = ch4_total_aterro_t_simplificado_organicos - ch4_vermi_total_t_simplificado_organicos
+        
+        # Calcular CO₂ equivalente (GWP100 do CH4 = 28, IPCC AR6)
+        GWP100 = 28
+        co2eq_evitado_t_simplificado_comp_organicos = ch4_evitado_t_simplificado_comp_organicos * GWP100
+        co2eq_evitado_t_simplificado_vermi_organicos = ch4_evitado_t_simplificado_vermi_organicos * GWP100
+        
+        # Métricas comparativas SIMPLIFICADAS (para contexto geral)
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "Massa em aterros (2023)",
+                f"{formatar_numero_br(massa_total_aterro_t_organicos)} t",
+                help="Total de orgânicos destinados a aterros em 2023 (base para projeção)"
+            )
+        
+        with col2:
+            st.metric(
+                "CH₄ do aterro (potencial)",
+                f"{formatar_numero_br(ch4_total_aterro_t_simplificado_organicos, 1)} t",
+                delta=None,
+                help="CH₄ gerado em aterros (potencial total, sem decaimento)"
+            )
+        
+        with col3:
+            st.metric(
+                "CH₄ evitado (Comp.)",
+                f"{formatar_numero_br(ch4_evitado_t_simplificado_comp_organicos, 1)} t",
+                delta=f"-{formatar_numero_br((ch4_evitado_t_simplificado_comp_organicos/ch4_total_aterro_t_simplificado_organicos)*100 if ch4_total_aterro_t_simplificado_organicos > 0 else 0, 1)}%",
+                delta_color="inverse",
+                help="Redução de CH₄ ao optar por compostagem"
+            )
+        
+        with col4:
+            st.metric(
+                "CO₂e evitado (Comp.)",
+                f"{formatar_numero_br(co2eq_evitado_t_simplificado_comp_organicos, 1)} t CO₂e",
+                help=f"Equivalente em CO₂ (GWP100 = {GWP100})"
+            )
+        
+        # Nota sobre compostagem de orgânicos
+        st.info("""
+        **💡 Importante para resíduos orgânicos:**
+        - Resíduos orgânicos coletados seletivamente são **ideais para compostagem/vermicompostagem**
+        - Já estão **segregados na fonte**, reduzindo custos de triagem
+        - **Alto potencial de geração de créditos de carbono** devido à massa significativa
+        - Podem ser tratados **localmente**, reduzindo custos de transporte
+        """)
+        
+    else:
+        st.success("✅ Não há massa de orgânicos coletados seletivamente destinada a aterros. Todo o material já está sendo direcionado para tratamentos adequados!")
+else:
+    st.info("ℹ️ Não foram encontrados registros de coleta seletiva de resíduos orgânicos para o município selecionado.")
+    st.write("""
+    **Nota:** A coleta seletiva de resíduos orgânicos é uma prática ainda em desenvolvimento no Brasil. 
+    Muitos municípios não possuem sistemas específicos para coleta de resíduos orgânicos, que muitas vezes 
+    são coletados junto com os resíduos indiferenciados.
+    """)
+
+st.markdown("---")
+
+# ============================================================
+# 🌳 DESTINAÇÃO DAS PODAS E GALHADAS DE ÁREAS VERDES PÚBLICAS
+# ============================================================
+
 st.subheader("🌳 Destinação das podas e galhadas de áreas verdes públicas")
 
 df_podas = df_mun[df_mun[COL_TIPO_COLETA].astype(str).str.contains("áreas verdes públicas", case=False, na=False)].copy()
