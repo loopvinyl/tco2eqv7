@@ -7,6 +7,9 @@ from bs4 import BeautifulSoup
 import re
 from scipy.signal import fftconvolve
 from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.ticker import FuncFormatter
 
 # =========================================================
 # Configuração da página
@@ -163,6 +166,25 @@ def formatar_br(numero):
     
     # Formata como string e substitui o ponto pela vírgula
     return f"{numero:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+# Função de formatação para os gráficos (padrão brasileiro)
+def br_format(x, pos):
+    """
+    Função de formatação para eixos de gráficos (padrão brasileiro)
+    """
+    if x == 0:
+        return "0"
+    
+    # Para valores muito pequenos, usa notação científica
+    if abs(x) < 0.01:
+        return f"{x:.1e}".replace(".", ",")
+    
+    # Para valores grandes, formata com separador de milhar
+    if abs(x) >= 1000:
+        return f"{x:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    
+    # Para valores menores, mostra duas casas decimais
+    return f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 # =============================================================================
 # FUNÇÕES AUXILIARES ORIGINAIS
@@ -420,6 +442,50 @@ def calcular_emissoes_totais_entrada_continua(massa_t_ano, mcf):
         'massa_anual_considerada': massa_t_ano,
         'massa_total_20_anos': massa_t_ano * ANOS_PROJECAO_CREDITOS
     }
+
+def calcular_emissoes_diarias_detalhadas(massa_t_ano, mcf):
+    """
+    Calcula emissões diárias detalhadas para criar gráficos
+    Retorna DataFrame com datas e emissões diárias em tCO₂eq
+    """
+    # Converter massa anual para diária (kg/dia)
+    massa_kg_dia = (massa_t_ano * 1000) / 365
+    
+    # Calcular emissões diárias com entrada contínua
+    emissoes_ch4_aterro_dia = calcular_emissoes_aterro_entrada_continua(massa_kg_dia, mcf, DIAS_PROJECAO)
+    emissoes_n2o_aterro_dia = calcular_emissoes_n2o_entrada_continua(massa_kg_dia, DIAS_PROJECAO)
+    
+    # Calcular emissões de tratamento biológico com entrada contínua
+    emissoes_ch4_compostagem_dia = calcular_emissoes_compostagem_entrada_continua(massa_kg_dia, DIAS_PROJECAO)
+    emissoes_ch4_vermicompostagem_dia = calcular_emissoes_vermicompostagem_entrada_continua(massa_kg_dia, DIAS_PROJECAO)
+    
+    # Converter para tCO₂eq diário
+    emissoes_aterro_tco2eq_dia = (emissoes_ch4_aterro_dia * GWP_CH4_20 + emissoes_n2o_aterro_dia * GWP_N2O_20) / 1000
+    emissoes_compostagem_tco2eq_dia = (emissoes_ch4_compostagem_dia * GWP_CH4_20) / 1000
+    emissoes_vermicompostagem_tco2eq_dia = (emissoes_ch4_vermicompostagem_dia * GWP_CH4_20) / 1000
+    
+    # Criar datas para 20 anos
+    data_inicio = datetime(2024, 1, 1)
+    datas = [data_inicio + timedelta(days=i) for i in range(DIAS_PROJECAO)]
+    
+    # Criar DataFrame
+    df = pd.DataFrame({
+        'Data': datas,
+        'Emissoes_Aterro_tCO2eq_dia': emissoes_aterro_tco2eq_dia,
+        'Emissoes_Compostagem_tCO2eq_dia': emissoes_compostagem_tco2eq_dia,
+        'Emissoes_Vermicompostagem_tCO2eq_dia': emissoes_vermicompostagem_tco2eq_dia
+    })
+    
+    # Calcular acumuladas
+    df['Total_Aterro_tCO2eq_acum'] = df['Emissoes_Aterro_tCO2eq_dia'].cumsum()
+    df['Total_Compostagem_tCO2eq_acum'] = df['Emissoes_Compostagem_tCO2eq_dia'].cumsum()
+    df['Total_Vermicompostagem_tCO2eq_acum'] = df['Emissoes_Vermicompostagem_tCO2eq_dia'].cumsum()
+    
+    # Calcular emissões evitadas acumuladas
+    df['Reducao_Compostagem_tCO2eq_acum'] = df['Total_Aterro_tCO2eq_acum'] - df['Total_Compostagem_tCO2eq_acum']
+    df['Reducao_Vermicompostagem_tCO2eq_acum'] = df['Total_Aterro_tCO2eq_acum'] - df['Total_Vermicompostagem_tCO2eq_acum']
+    
+    return df
 
 # =========================================================
 # Função para determinar MCF baseado no tipo de destino
@@ -756,6 +822,105 @@ if not df_podas.empty:
                     f"{formatar_numero_br(co2eq_total_evitado_compostagem_20anos, 1)} tCO₂e",
                     help="Emissões evitadas com compostagem em 20 anos"
                 )
+            
+            # =============================================================================
+            # 📈 GRÁFICO: REDUÇÃO DE EMISSÕES ACUMULADA (IGUAL AO SCRIPT TCO2E)
+            # =============================================================================
+            st.markdown("---")
+            st.subheader("📉 Redução de Emissões Acumulada (20 anos)")
+            
+            # Calcular dados para o gráfico (somar todos os destinos)
+            # Inicializar arrays de emissões diárias
+            datas = []
+            total_aterro_diario = np.zeros(DIAS_PROJECAO)
+            total_compostagem_diario = np.zeros(DIAS_PROJECAO)
+            total_vermicompostagem_diario = np.zeros(DIAS_PROJECAO)
+            
+            # Data inicial para o gráfico
+            data_inicio = datetime(2024, 1, 1)
+            
+            # Para cada destino, calcular emissões diárias e somar
+            for _, row in df_podas_destino.iterrows():
+                massa_t_ano = row["MASSA_FLOAT"]
+                mcf = row["MCF"]
+                
+                if mcf > 0 and massa_t_ano > 0:
+                    # Calcular emissões diárias detalhadas
+                    df_detalhado = calcular_emissoes_diarias_detalhadas(massa_t_ano, mcf)
+                    
+                    # Somar às totais
+                    total_aterro_diario += df_detalhado['Emissoes_Aterro_tCO2eq_dia'].values
+                    total_compostagem_diario += df_detalhado['Emissoes_Compostagem_tCO2eq_dia'].values
+                    total_vermicompostagem_diario += df_detalhado['Emissoes_Vermicompostagem_tCO2eq_dia'].values
+            
+            # Criar DataFrame para o gráfico
+            df_grafico = pd.DataFrame({
+                'Data': [data_inicio + timedelta(days=i) for i in range(DIAS_PROJECAO)],
+                'Total_Aterro_tCO2eq_dia': total_aterro_diario,
+                'Total_Compostagem_tCO2eq_dia': total_compostagem_diario,
+                'Total_Vermicompostagem_tCO2eq_dia': total_vermicompostagem_diario
+            })
+            
+            # Calcular acumuladas
+            df_grafico['Total_Aterro_tCO2eq_acum'] = df_grafico['Total_Aterro_tCO2eq_dia'].cumsum()
+            df_grafico['Total_Compostagem_tCO2eq_acum'] = df_grafico['Total_Compostagem_tCO2eq_dia'].cumsum()
+            df_grafico['Total_Vermicompostagem_tCO2eq_acum'] = df_grafico['Total_Vermicompostagem_tCO2eq_dia'].cumsum()
+            
+            # Criar gráfico
+            fig, ax = plt.subplots(figsize=(12, 6))
+            
+            # Plotar linhas
+            ax.plot(df_grafico['Data'], df_grafico['Total_Aterro_tCO2eq_acum'], 
+                   'r-', label='Cenário Base (Aterro Sanitário)', linewidth=2)
+            ax.plot(df_grafico['Data'], df_grafico['Total_Compostagem_tCO2eq_acum'], 
+                   'g-', label='Projeto (Compostagem Termofílica)', linewidth=2)
+            ax.plot(df_grafico['Data'], df_grafico['Total_Vermicompostagem_tCO2eq_acum'], 
+                   'b-', label='Projeto (Vermicompostagem)', linewidth=2, linestyle='--')
+            
+            # Preencher área entre as linhas (emissões evitadas)
+            ax.fill_between(df_grafico['Data'], 
+                           df_grafico['Total_Compostagem_tCO2eq_acum'], 
+                           df_grafico['Total_Aterro_tCO2eq_acum'],
+                           color='lightgreen', alpha=0.3, label='Emissões Evitadas (Compostagem)')
+            
+            # Configurar eixos
+            ax.set_title(f'Redução de Emissões Acumulada em {ANOS_PROJECAO_CREDITOS} Anos', fontsize=14, fontweight='bold')
+            ax.set_xlabel('Ano', fontsize=12)
+            ax.set_ylabel('tCO₂e Acumulado', fontsize=12)
+            
+            # Formatar eixo X para mostrar apenas anos
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+            ax.xaxis.set_major_locator(mdates.YearLocator(2))  # Mostrar a cada 2 anos
+            plt.xticks(rotation=45)
+            
+            # Formatar eixo Y no padrão brasileiro
+            br_formatter = FuncFormatter(br_format)
+            ax.yaxis.set_major_formatter(br_formatter)
+            
+            # Adicionar grid e legenda
+            ax.grid(True, linestyle='--', alpha=0.7)
+            ax.legend(loc='upper left', fontsize=10)
+            
+            # Ajustar layout
+            plt.tight_layout()
+            
+            # Mostrar gráfico no Streamlit
+            st.pyplot(fig)
+            
+            # Adicionar informações abaixo do gráfico
+            st.markdown(f"""
+            **📊 Interpretação do Gráfico:**
+            - **Linha Vermelha:** Emissões acumuladas do cenário base (aterro sanitário) - **{formatar_numero_br(df_grafico['Total_Aterro_tCO2eq_acum'].iloc[-1], 1)} tCO₂e**
+            - **Linha Verde:** Emissões acumuladas do projeto (compostagem) - **{formatar_numero_br(df_grafico['Total_Compostagem_tCO2eq_acum'].iloc[-1], 1)} tCO₂e**
+            - **Linha Azul Tracejada:** Emissões acumuladas do projeto (vermicompostagem) - **{formatar_numero_br(df_grafico['Total_Vermicompostagem_tCO2eq_acum'].iloc[-1], 1)} tCO₂e**
+            - **Área Verde:** Emissões evitadas pela compostagem - **{formatar_numero_br(co2eq_total_evitado_compostagem_20anos, 1)} tCO₂e**
+            
+            **💡 Observações:**
+            1. As emissões do aterro **acumulam mais rapidamente** devido ao decaimento gradual
+            2. As emissões da compostagem/vermicompostagem são **imediatas** (processo em 50 dias)
+            3. A **área entre as curvas** representa os créditos de carbono gerados
+            4. Curva do aterro mostra o **efeito do decaimento exponencial** (k = {k_ano} ano⁻¹)
+            """)
             
             # =============================================================================
             # SEÇÃO DE COTAÇÃO AUTOMÁTICA DO CARBONO
