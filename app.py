@@ -495,7 +495,7 @@ def calcular_emissoes_diarias_detalhadas(massa_t_ano, mcf):
         'Data': datas,
         'Emissoes_Aterro_tCO2eq_dia': emissoes_aterro_tco2eq_dia,
         'Emissoes_Compostagem_tCO2eq_dia': emissoes_compostagem_tco2eq_dia,
-        'Emissoes_Vermicompostagem_tCO2eq_dia': emissoes_vermicompostagem_tCO2eq_dia
+        'Emissoes_Vermicompostagem_tCO2eq_dia': emissoes_vermicompostagem_tco2eq_dia
     })
     
     # Calcular acumuladas
@@ -794,6 +794,397 @@ if not df_organicos.empty:
         - **Método matemático:** `fftconvolve(entradas_diarias, kernel_exponencial)`
         """)
         
+        # =============================================================================
+        # 🎯 PROJEÇÃO PARA CRÉDITOS DE CARBONO (20 ANOS COM ENTRADA CONTÍNUA) - RESÍDUOS ORGÂNICOS
+        # =============================================================================
+        st.markdown("---")
+        st.subheader("🎯 Projeção para Créditos de Carbono - Resíduos Orgânicos (20 anos com entrada contínua)")
+        
+        st.info(f"""
+        **Metodologia avançada para resíduos orgânicos:** Este cálculo considera **entrada contínua de resíduos orgânicos** (mesma massa de 2023 a cada ano)
+        e o **decaimento acumulado das emissões no aterro ao longo de {ANOS_PROJECAO_CREDITOS} anos**,
+        conforme modelo do IPCC 2006 e implementado no script original tco2e.
+        
+        - **Período:** {ANOS_PROJECAO_CREDITOS} anos (padrão para projetos de créditos de carbono)
+        - **Entrada anual:** {formatar_numero_br(massa_total_aterro_t_organicos)} t/ano (mantendo massa de 2023)
+        - **Total massa em 20 anos:** {formatar_numero_br(massa_total_aterro_t_organicos * ANOS_PROJECAO_CREDITOS)} t
+        - **Constante de decaimento (k):** {k_ano} ano⁻¹
+        - **GWP CH₄ (20 anos):** {GWP_CH4_20}
+        - **Considera decomposição gradual** dos resíduos de todos os anos
+        """)
+        
+        # Calcular emissões COM ENTRADA CONTÍNUA para cada tipo de aterro (orgânicos)
+        resultados_entrada_continua_organicos = []
+        co2eq_total_aterro_20anos_organicos = 0
+        co2eq_total_evitado_compostagem_20anos_organicos = 0
+        co2eq_total_evitado_vermicompostagem_20anos_organicos = 0
+        
+        for _, row in df_organicos_destino.iterrows():
+            destino = row[COL_DESTINO]
+            massa_t_ano = row["MASSA_FLOAT"]  # Massa ANUAL de 2023
+            mcf = row["MCF"]
+            
+            if mcf > 0 and massa_t_ano > 0:
+                # Calcular emissões com entrada contínua para 20 anos
+                resultados = calcular_emissoes_totais_entrada_continua(massa_t_ano, mcf)
+                
+                co2eq_total_aterro_20anos_organicos += resultados['co2eq_aterro_total']
+                co2eq_total_evitado_compostagem_20anos_organicos += resultados['co2eq_evitado_compostagem']
+                co2eq_total_evitado_vermicompostagem_20anos_organicos += resultados['co2eq_evitado_vermicompostagem']
+                
+                resultados_entrada_continua_organicos.append({
+                    "Destino": destino,
+                    "Massa anual (t)": formatar_numero_br(massa_t_ano),
+                    "MCF": formatar_numero_br(mcf, 2),
+                    "Linha de Base (tCO₂e)": formatar_numero_br(resultados['co2eq_aterro_total'], 1),
+                    "Emissões Evitadas - Compostagem (tCO₂e)": formatar_numero_br(resultados['co2eq_evitado_compostagem'], 1),
+                    "Emissões Evitadas - Vermicompostagem (tCO₂e)": formatar_numero_br(resultados['co2eq_evitado_vermicompostagem'], 1),
+                    "Média anual evitada (tCO₂e/ano)": formatar_numero_br(resultados['co2eq_evitado_medio_anual_compostagem'], 1)
+                })
+        
+        if resultados_entrada_continua_organicos:
+            # Mostrar tabela de resultados com entrada contínua
+            st.dataframe(pd.DataFrame(resultados_entrada_continua_organicos), use_container_width=True)
+            
+            # Calcular médias anuais (dividindo por 20)
+            media_anual_evitado_compostagem_organicos = co2eq_total_evitado_compostagem_20anos_organicos / ANOS_PROJECAO_CREDITOS
+            media_anual_evitado_vermicompostagem_organicos = co2eq_total_evitado_vermicompostagem_20anos_organicos / ANOS_PROJECAO_CREDITOS
+            
+            # Resumo geral para orgânicos
+            st.markdown("#### 📊 Resumo Geral da Projeção - Resíduos Orgânicos (20 anos)")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric(
+                    "Massa total 20 anos",
+                    f"{formatar_numero_br(massa_total_aterro_t_organicos * ANOS_PROJECAO_CREDITOS)} t",
+                    help=f"{formatar_numero_br(massa_total_aterro_t_organicos)} t/ano × {ANOS_PROJECAO_CREDITOS} anos"
+                )
+            
+            with col2:
+                st.metric(
+                    "Linha de Base total (tCO₂e)",
+                    f"{formatar_numero_br(co2eq_total_aterro_20anos_organicos, 1)} tCO₂e",
+                    help="Emissões acumuladas do aterro em 20 anos"
+                )
+            
+            with col3:
+                st.metric(
+                    "Emissões Evitadas - Compostagem (tCO₂e)",
+                    f"{formatar_numero_br(co2eq_total_evitado_compostagem_20anos_organicos, 1)} tCO₂e",
+                    help="Emissões evitadas com compostagem em 20 anos"
+                )
+            
+            # =============================================================================
+            # 📈 GRÁFICO: REDUÇÃO DE EMISSÕES ACUMULADA - RESÍDUOS ORGÂNICOS (IGUAL AO SCRIPT TCO2E)
+            # =============================================================================
+            st.markdown("---")
+            st.subheader("📉 Redução de Emissões Acumulada - Resíduos Orgânicos (20 anos)")
+            
+            # Calcular dados para o gráfico (somar todos os destinos)
+            # Inicializar arrays de emissões diárias
+            datas = []
+            total_aterro_diario_organicos = np.zeros(DIAS_PROJECAO)
+            total_compostagem_diario_organicos = np.zeros(DIAS_PROJECAO)
+            total_vermicompostagem_diario_organicos = np.zeros(DIAS_PROJECAO)
+            
+            # Data inicial para o gráfico
+            data_inicio = datetime(2024, 1, 1)
+            
+            # Para cada destino, calcular emissões diárias e somar
+            for _, row in df_organicos_destino.iterrows():
+                massa_t_ano = row["MASSA_FLOAT"]
+                mcf = row["MCF"]
+                
+                if mcf > 0 and massa_t_ano > 0:
+                    # Calcular emissões diárias detalhadas
+                    df_detalhado = calcular_emissoes_diarias_detalhadas(massa_t_ano, mcf)
+                    
+                    # Somar às totais
+                    total_aterro_diario_organicos += df_detalhado['Emissoes_Aterro_tCO2eq_dia'].values
+                    total_compostagem_diario_organicos += df_detalhado['Emissoes_Compostagem_tCO2eq_dia'].values
+                    total_vermicompostagem_diario_organicos += df_detalhado['Emissoes_Vermicompostagem_tCO2eq_dia'].values
+            
+            # Criar DataFrame para o gráfico
+            df_grafico_organicos = pd.DataFrame({
+                'Data': [data_inicio + timedelta(days=i) for i in range(DIAS_PROJECAO)],
+                'Total_Aterro_tCO2eq_dia': total_aterro_diario_organicos,
+                'Total_Compostagem_tCO2eq_dia': total_compostagem_diario_organicos,
+                'Total_Vermicompostagem_tCO2eq_dia': total_vermicompostagem_diario_organicos
+            })
+            
+            # Calcular acumuladas
+            df_grafico_organicos['Total_Aterro_tCO2eq_acum'] = df_grafico_organicos['Total_Aterro_tCO2eq_dia'].cumsum()
+            df_grafico_organicos['Total_Compostagem_tCO2eq_acum'] = df_grafico_organicos['Total_Compostagem_tCO2eq_dia'].cumsum()
+            df_grafico_organicos['Total_Vermicompostagem_tCO2eq_acum'] = df_grafico_organicos['Total_Vermicompostagem_tCO2eq_dia'].cumsum()
+            
+            # Criar gráfico
+            fig, ax = plt.subplots(figsize=(12, 6))
+            
+            # Plotar linhas
+            ax.plot(df_grafico_organicos['Data'], df_grafico_organicos['Total_Aterro_tCO2eq_acum'], 
+                   'r-', label='Cenário Base (Aterro Sanitário)', linewidth=2)
+            ax.plot(df_grafico_organicos['Data'], df_grafico_organicos['Total_Compostagem_tCO2eq_acum'], 
+                   'g-', label='Projeto (Compostagem Termofílica)', linewidth=2)
+            ax.plot(df_grafico_organicos['Data'], df_grafico_organicos['Total_Vermicompostagem_tCO2eq_acum'], 
+                   'b-', label='Projeto (Vermicompostagem)', linewidth=2, linestyle='--')
+            
+            # Preencher área entre as linhas (emissões evitadas)
+            ax.fill_between(df_grafico_organicos['Data'], 
+                           df_grafico_organicos['Total_Compostagem_tCO2eq_acum'], 
+                           df_grafico_organicos['Total_Aterro_tCO2eq_acum'],
+                           color='lightgreen', alpha=0.3, label='Emissões Evitadas (Compostagem)')
+            
+            # Configurar eixos
+            ax.set_title(f'Redução de Emissões Acumulada - Resíduos Orgânicos em {ANOS_PROJECAO_CREDITOS} Anos', fontsize=14, fontweight='bold')
+            ax.set_xlabel('Ano', fontsize=12)
+            ax.set_ylabel('tCO₂e Acumulado', fontsize=12)
+            
+            # Formatar eixo X para mostrar apenas anos
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+            ax.xaxis.set_major_locator(mdates.YearLocator(2))  # Mostrar a cada 2 anos
+            plt.xticks(rotation=45)
+            
+            # Formatar eixo Y no padrão brasileiro
+            br_formatter = FuncFormatter(br_format)
+            ax.yaxis.set_major_formatter(br_formatter)
+            
+            # Adicionar grid e legenda
+            ax.grid(True, linestyle='--', alpha=0.7)
+            ax.legend(loc='upper left', fontsize=10)
+            
+            # Ajustar layout
+            plt.tight_layout()
+            
+            # Mostrar gráfico no Streamlit
+            st.pyplot(fig)
+            
+            # Adicionar informações abaixo do gráfico
+            st.markdown(f"""
+            **📊 Interpretação do Gráfico - Resíduos Orgânicos:**
+            - **Linha Vermelha:** Emissões acumuladas do cenário base (aterro sanitário) - **{formatar_numero_br(df_grafico_organicos['Total_Aterro_tCO2eq_acum'].iloc[-1], 1)} tCO₂e**
+            - **Linha Verde:** Emissões acumuladas do projeto (compostagem) - **{formatar_numero_br(df_grafico_organicos['Total_Compostagem_tCO2eq_acum'].iloc[-1], 1)} tCO₂e**
+            - **Linha Azul Tracejada:** Emissões acumuladas do projeto (vermicompostagem) - **{formatar_numero_br(df_grafico_organicos['Total_Vermicompostagem_tCO2eq_acum'].iloc[-1], 1)} tCO₂e**
+            - **Área Verde:** Emissões evitadas pela compostagem - **{formatar_numero_br(co2eq_total_evitado_compostagem_20anos_organicos, 1)} tCO₂e**
+            
+            **💡 Observações para resíduos orgânicos:**
+            1. Resíduos orgânicos coletados seletivamente têm **alto potencial** para compostagem/vermicompostagem
+            2. Já estão **segregados na fonte**, reduzindo custos de triagem
+            3. Podem ser tratados **localmente**, reduzindo custos de transporte
+            4. A **área entre as curvas** representa os créditos de carbono gerados
+            5. Curva do aterro mostra o **efeito do decaimento exponencial** (k = {k_ano} ano⁻¹)
+            """)
+            
+            # =============================================================================
+            # SEÇÃO DE COTAÇÃO AUTOMÁTICA DO CARBONO - RESÍDUOS ORGÂNICOS
+            # =============================================================================
+            st.markdown("---")
+            st.subheader("💰 Mercado de Carbono - Valor Financeiro das Emissões Evitadas (Resíduos Orgânicos)")
+            
+            # Obter cotações automaticamente
+            with st.spinner("🔄 Obtendo cotações em tempo real..."):
+                # Obter cotação do carbono
+                preco_carbono, moeda_carbono, contrato_info, sucesso_carbono, fonte_carbono = obter_cotacao_carbono()
+                
+                # Obter cotação do Euro
+                taxa_cambio, moeda_real, sucesso_euro, fonte_euro = obter_cotacao_euro_real()
+            
+            # Exibir cotações atuais
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric(
+                    label=f"Preço do Carbono (tCO₂eq)",
+                    value=f"{moeda_carbono} {formatar_br(preco_carbono)}",
+                    help=f"Fonte: {fonte_carbono}"
+                )
+            
+            with col2:
+                st.metric(
+                    label="Euro (EUR/BRL)",
+                    value=f"{moeda_real} {formatar_br(taxa_cambio)}",
+                    help=f"Fonte: {fonte_euro}"
+                )
+            
+            with col3:
+                preco_carbono_reais = preco_carbono * taxa_cambio
+                st.metric(
+                    label=f"Carbono em Reais (tCO₂eq)",
+                    value=f"R$ {formatar_br(preco_carbono_reais)}",
+                    help="Preço do carbono convertido para Reais Brasileiros"
+                )
+            
+            # =============================================================================
+            # VALOR FINANCEIRO DAS EMISSÕES EVITADAS - PROJEÇÃO 20 ANOS COM ENTRADA CONTÍNUA (ORGÂNICOS)
+            # =============================================================================
+            st.subheader("💵 Valor Financeiro do CO₂e Evitado - Resíduos Orgânicos (20 anos com entrada contínua)")
+            
+            # Calcular valores financeiros para 20 anos (TOTAL)
+            valor_total_euros_20anos_comp_organicos = calcular_valor_creditos(
+                co2eq_total_evitado_compostagem_20anos_organicos, preco_carbono, moeda_carbono
+            )
+            valor_total_reais_20anos_comp_organicos = calcular_valor_creditos(
+                co2eq_total_evitado_compostagem_20anos_organicos, preco_carbono, "R$", taxa_cambio
+            )
+            
+            valor_total_euros_20anos_vermi_organicos = calcular_valor_creditos(
+                co2eq_total_evitado_vermicompostagem_20anos_organicos, preco_carbono, moeda_carbono
+            )
+            valor_total_reais_20anos_vermi_organicos = calcular_valor_creditos(
+                co2eq_total_evitado_vermicompostagem_20anos_organicos, preco_carbono, "R$", taxa_cambio
+            )
+            
+            # Calcular médias anuais (dividir por 20)
+            valor_medio_anual_euros_comp_organicos = valor_total_euros_20anos_comp_organicos / ANOS_PROJECAO_CREDITOS
+            valor_medio_anual_reais_comp_organicos = valor_total_reais_20anos_comp_organicos / ANOS_PROJECAO_CREDITOS
+            
+            valor_medio_anual_euros_vermi_organicos = valor_total_euros_20anos_vermi_organicos / ANOS_PROJECAO_CREDITOS
+            valor_medio_anual_reais_vermi_organicos = valor_total_reais_20anos_vermi_organicos / ANOS_PROJECAO_CREDITOS
+            
+            # Exibir resultados da projeção - COMPOSTAGEM (ORGÂNICOS)
+            st.markdown("#### 🍂 Compostagem - Valor dos Créditos de Carbono (Resíduos Orgânicos)")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric(
+                    "Emissões Evitadas (tCO₂e)",
+                    f"{formatar_br(co2eq_total_evitado_compostagem_20anos_organicos)} tCO₂e",
+                    help=f"Total em {ANOS_PROJECAO_CREDITOS} anos com entrada contínua"
+                )
+            
+            with col2:
+                st.metric(
+                    "Média anual (tCO₂e/ano)",
+                    f"{formatar_br(media_anual_evitado_compostagem_organicos)} tCO₂e/ano",
+                    help="Média anual (total ÷ 20)"
+                )
+            
+            with col3:
+                st.metric(
+                    "Valor total (Euro)",
+                    f"{moeda_carbono} {formatar_br(valor_total_euros_20anos_comp_organicos)}",
+                    help=f"Valor acumulado em {ANOS_PROJECAO_CREDITOS} anos"
+                )
+            
+            with col4:
+                st.metric(
+                    "Valor médio anual (Euro)",
+                    f"{moeda_carbono} {formatar_br(valor_medio_anual_euros_comp_organicos)}/ano",
+                    help="Média anual (total ÷ 20)"
+                )
+            
+            # Linha 2: Compostagem em Reais (Orgânicos)
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric(
+                    "Valor total (R$)",
+                    f"R$ {formatar_br(valor_total_reais_20anos_comp_organicos)}",
+                    help=f"Valor acumulado em {ANOS_PROJECAO_CREDITOS} anos"
+                )
+            
+            with col2:
+                st.metric(
+                    "Valor médio anual (R$)",
+                    f"R$ {formatar_br(valor_medio_anual_reais_comp_organicos)}/ano",
+                    help="Média anual (total ÷ 20)"
+                )
+            
+            # Exibir resultados da projeção - VERMICOMPOSTAGEM (ORGÂNICOS)
+            st.markdown("#### 🐛 Vermicompostagem - Valor dos Créditos de Carbono (Resíduos Orgânicos)")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric(
+                    "Emissões Evitadas (tCO₂e)",
+                    f"{formatar_br(co2eq_total_evitado_vermicompostagem_20anos_organicos)} tCO₂e",
+                    help=f"Total em {ANOS_PROJECAO_CREDITOS} anos com entrada contínua"
+                )
+            
+            with col2:
+                st.metric(
+                    "Média anual (tCO₂e/ano)",
+                    f"{formatar_br(media_anual_evitado_vermicompostagem_organicos)} tCO₂e/ano",
+                    help="Média anual (total ÷ 20)"
+                )
+            
+            with col3:
+                st.metric(
+                    "Valor total (Euro)",
+                    f"{moeda_carbono} {formatar_br(valor_total_euros_20anos_vermi_organicos)}",
+                    help=f"Valor acumulado em {ANOS_PROJECAO_CREDITOS} anos"
+                )
+            
+            with col4:
+                st.metric(
+                    "Valor médio anual (Euro)",
+                    f"{moeda_carbono} {formatar_br(valor_medio_anual_euros_vermi_organicos)}/ano",
+                    help="Média anual (total ÷ 20)"
+                )
+            
+            # Linha 4: Vermicompostagem em Reais (Orgânicos)
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric(
+                    "Valor total (R$)",
+                    f"R$ {formatar_br(valor_total_reais_20anos_vermi_organicos)}",
+                    help=f"Valor acumulado em {ANOS_PROJECAO_CREDITOS} anos"
+                )
+            
+            with col2:
+                st.metric(
+                    "Valor médio anual (R$)",
+                    f"R$ {formatar_br(valor_medio_anual_reais_vermi_organicos)}/ano",
+                    help="Média anual (total ÷ 20)"
+                )
+            
+            # Explicação sobre como calcular o valor
+            with st.expander("🧮 Como é calculado o valor dos créditos de carbono para resíduos orgânicos?"):
+                st.markdown(f"""
+                **📊 Fórmula de Cálculo:**
+                ```
+                Valor dos Créditos = Emissões Evitadas × Preço do Carbono
+                ```
+                
+                **📈 Para Compostagem de Resíduos Orgânicos:**
+                - **Emissões Evitadas:** {formatar_br(co2eq_total_evitado_compostagem_20anos_organicos)} tCO₂e
+                - **Preço do Carbono:** {moeda_carbono} {formatar_br(preco_carbono)}/tCO₂eq
+                - **Cálculo:** {formatar_br(co2eq_total_evitado_compostagem_20anos_organicos)} × {formatar_br(preco_carbono)} = {moeda_carbono} {formatar_br(valor_total_euros_20anos_comp_organicos)}
+                
+                **💰 Em Reais (com câmbio):**
+                - **Taxa de câmbio:** 1 Euro = R$ {formatar_br(taxa_cambio)}
+                - **Preço em Reais:** R$ {formatar_br(preco_carbono_reais)}/tCO₂eq
+                - **Cálculo:** {formatar_br(co2eq_total_evitado_compostagem_20anos_organicos)} × {formatar_br(preco_carbono_reais)} = R$ {formatar_br(valor_total_reais_20anos_comp_organicos)}
+                
+                **📅 Média Anual (dividindo por 20 anos):**
+                - **Emissões anuais:** {formatar_br(media_anual_evitado_compostagem_organicos)} tCO₂e/ano
+                - **Valor anual em Euro:** {moeda_carbono} {formatar_br(valor_medio_anual_euros_comp_organicos)}/ano
+                - **Valor anual em Real:** R$ {formatar_br(valor_medio_anual_reais_comp_organicos)}/ano
+                
+                **💡 Vantagens dos resíduos orgânicos:**
+                - Já estão **segregados na fonte**, reduzindo custos de triagem
+                - **Alto teor de matéria orgânica**, ideal para compostagem/vermicompostagem
+                - Podem ser tratados **localmente**, reduzindo custos de transporte
+                - **Alto potencial de geração de créditos** devido à massa significativa
+                """)
+            
+            # Nota sobre atualização automática
+            st.info(f"""
+            **🔄 Atualização Automática - Resíduos Orgânicos:**
+            - As cotações são atualizadas automaticamente toda vez que você acessa o app
+            - Preço atual do carbono: **{moeda_carbono} {formatar_br(preco_carbono)}/tCO₂eq**
+            - Taxa de câmbio atual: **1 Euro = R$ {formatar_br(taxa_cambio)}**
+            - **Emissões Evitadas totais (orgânicos):** {formatar_br(co2eq_total_evitado_compostagem_20anos_organicos)} tCO₂e
+            - **Valor total dos créditos (orgânicos):** {moeda_carbono} {formatar_br(valor_total_euros_20anos_comp_organicos)} (ou R$ {formatar_br(valor_total_reais_20anos_comp_organicos)})
+            """)
+        
+        else:
+            st.info("✅ Não há massa de orgânicos coletados seletivamente destinada a aterros. Todo o material já está sendo direcionado para tratamentos adequados!")
+    
+    else:
+        st.success("✅ Não há massa de orgânicos coletados seletivamente destinada a aterros. Todo o material já está sendo direcionado para tratamentos adequados!")
+        
         # Nota sobre compostagem de orgânicos
         st.info("""
         **💡 Importante para resíduos orgânicos:**
@@ -802,9 +1193,6 @@ if not df_organicos.empty:
         - **Alto potencial de geração de créditos de carbono** devido à massa significativa
         - Podem ser tratados **localmente**, reduzindo custos de transporte
         """)
-        
-    else:
-        st.success("✅ Não há massa de orgânicos coletados seletivamente destinada a aterros. Todo o material já está sendo direcionado para tratamentos adequados!")
 else:
     st.info("ℹ️ Não foram encontrados registros de coleta seletiva de resíduos orgânicos para o município selecionado.")
     st.write("""
