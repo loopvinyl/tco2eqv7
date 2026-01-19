@@ -26,6 +26,23 @@ e avalia o **potencial técnico para compostagem e vermicompostagem**
 de resíduos sólidos urbanos.
 """)
 
+# =========================================================
+# Seleção de Ano
+# =========================================================
+ano_selecionado = st.selectbox(
+    "Selecione o ano de referência:",
+    ["2023", "2024"],
+    index=1  # Padrão 2024
+)
+
+# =========================================================
+# URLs dos arquivos por ano
+# =========================================================
+URLS_POR_ANO = {
+    "2023": "https://github.com/loopvinyl/tco2eqv7/raw/main/rsuBrasil_2023.xlsx",
+    "2024": "https://github.com/loopvinyl/tco2eqv7/raw/main/rsuBrasil_2024.xlsx"
+}
+
 # =============================================================================
 # FUNÇÕES DE COTAÇÃO AUTOMÁTICA DO CARBONO E CÂMBIO
 # =============================================================================
@@ -556,8 +573,8 @@ def determinar_mcf_por_destino(destino):
 # Carga do Excel
 # =========================================================
 @st.cache_data
-def load_data():
-    url = "https://raw.githubusercontent.com/loopvinyl/tco2eqv7/main/rsuBrasil.xlsx"
+def load_data(ano):
+    url = URLS_POR_ANO[ano]
     df = pd.read_excel(
         url,
         sheet_name="Manejo_Coleta_e_Destinação",
@@ -567,7 +584,7 @@ def load_data():
     df.columns = [str(col).strip() for col in df.columns]
     return df
 
-df = load_data()
+df = load_data(ano_selecionado)
 
 # =========================================================
 # Definição de colunas
@@ -618,7 +635,7 @@ municipios = ["BRASIL – Todos os municípios"] + sorted(df_clean[COL_MUNICIPIO
 municipio = st.selectbox("Selecione o município:", municipios)
 
 df_mun = df_clean.copy() if municipio == municipios[0] else df_clean[df_clean[COL_MUNICIPIO] == municipio]
-st.subheader("🇧🇷 Brasil — Síntese Nacional de RSU" if municipio == municipios[0] else f"📍 {municipio}")
+st.subheader(f"🇧🇷 Brasil — Síntese Nacional de RSU ({ano_selecionado})" if municipio == municipios[0] else f"📍 {municipio} - Ano {ano_selecionado}")
 
 # =========================================================
 # Tabela principal
@@ -694,7 +711,7 @@ if not df_organicos.empty:
     
     for _, row in df_organicos_destino.iterrows():
         destino = row[COL_DESTINO]
-        massa_t_ano = row["MASSA_FLOAT"]  # Massa ANUAL de 2023
+        massa_t_ano = row["MASSA_FLOAT"]  # Massa ANUAL do ano selecionado
         mcf = row["MCF"]
         
         # Só calcular emissões para destinos com MCF > 0 (aterros)
@@ -754,9 +771,9 @@ if not df_organicos.empty:
         
         with col1:
             st.metric(
-                "Massa em aterros (2023)",
+                "Massa em aterros",
                 f"{formatar_numero_br(massa_total_aterro_t_organicos)} t",
-                help="Total de orgânicos destinados a aterros em 2023 (base para projeção)"
+                help=f"Total de orgânicos destinados a aterros em {ano_selecionado} (base para projeção)"
             )
         
         with col2:
@@ -789,7 +806,7 @@ if not df_organicos.empty:
         - **Período:** {ANOS_PROJECAO_CREDITOS} anos com entrada contínua
         - **Constante de decaimento (k):** {k_ano} ano⁻¹
         - **Modelo:** Decomposição exponencial com convolução (IPCC 2006)
-        - **Entrada anual constante:** {formatar_numero_br(massa_total_aterro_t_organicos)} t/ano
+        - **Entrada anual constante:** {formatar_numero_br(massa_total_aterro_t_organicos)} t/ano (dados de {ano_selecionado})
         - **Massa total 20 anos:** {formatar_numero_br(massa_total_aterro_t_organicos * ANOS_PROJECAO_CREDITOS)} t
         - **Método matemático:** `fftconvolve(entradas_diarias, kernel_exponencial)`
         """)
@@ -801,12 +818,12 @@ if not df_organicos.empty:
         st.subheader("🎯 Projeção para Créditos de Carbono - Resíduos Orgânicos (20 anos com entrada contínua)")
         
         st.info(f"""
-        **Metodologia avançada para resíduos orgânicos:** Este cálculo considera **entrada contínua de resíduos orgânicos** (mesma massa de 2023 a cada ano)
+        **Metodologia avançada para resíduos orgânicos:** Este cálculo considera **entrada contínua de resíduos orgânicos** (mesma massa de {ano_selecionado} a cada ano)
         e o **decaimento acumulado das emissões no aterro ao longo de {ANOS_PROJECAO_CREDITOS} anos**,
         conforme modelo do IPCC 2006 e implementado no script original tco2e.
         
         - **Período:** {ANOS_PROJECAO_CREDITOS} anos (padrão para projetos de créditos de carbono)
-        - **Entrada anual:** {formatar_numero_br(massa_total_aterro_t_organicos)} t/ano (mantendo massa de 2023)
+        - **Entrada anual:** {formatar_numero_br(massa_total_aterro_t_organicos)} t/ano (mantendo massa de {ano_selecionado})
         - **Total massa em 20 anos:** {formatar_numero_br(massa_total_aterro_t_organicos * ANOS_PROJECAO_CREDITOS)} t
         - **Constante de decaimento (k):** {k_ano} ano⁻¹
         - **GWP CH₄ (20 anos):** {GWP_CH4_20}
@@ -821,7 +838,7 @@ if not df_organicos.empty:
         
         for _, row in df_organicos_destino.iterrows():
             destino = row[COL_DESTINO]
-            massa_t_ano = row["MASSA_FLOAT"]  # Massa ANUAL de 2023
+            massa_t_ano = row["MASSA_FLOAT"]  # Massa ANUAL do ano selecionado
             mcf = row["MCF"]
             
             if mcf > 0 and massa_t_ano > 0:
@@ -1242,7 +1259,7 @@ if not df_podas.empty:
     
     for _, row in df_podas_destino.iterrows():
         destino = row[COL_DESTINO]
-        massa_t_ano = row["MASSA_FLOAT"]  # Massa ANUAL de 2023
+        massa_t_ano = row["MASSA_FLOAT"]  # Massa ANUAL do ano selecionado
         mcf = row["MCF"]
         
         # Só calcular emissões para destinos com MCF > 0 (aterros)
@@ -1275,9 +1292,9 @@ if not df_podas.empty:
         
         with col1:
             st.metric(
-                "Massa em aterros (2023)",
+                "Massa em aterros",
                 f"{formatar_numero_br(massa_total_aterro_t)} t",
-                help="Total de podas destinadas a aterros em 2023 (base para projeção)"
+                help=f"Total de podas destinadas a aterros em {ano_selecionado} (base para projeção)"
             )
         
         with col2:
@@ -1294,7 +1311,7 @@ if not df_podas.empty:
         - **Período:** {ANOS_PROJECAO_CREDITOS} anos com entrada contínua
         - **Constante de decaimento (k):** {k_ano} ano⁻¹
         - **Modelo:** Decomposição exponencial com convolução (IPCC 2006)
-        - **Entrada anual constante:** {formatar_numero_br(massa_total_aterro_t)} t/ano
+        - **Entrada anual constante:** {formatar_numero_br(massa_total_aterro_t)} t/ano (dados de {ano_selecionado})
         - **Massa total 20 anos:** {formatar_numero_br(massa_total_aterro_t * ANOS_PROJECAO_CREDITOS)} t
         - **Método matemático:** `fftconvolve(entradas_diarias, kernel_exponencial)`
         """)
@@ -1306,12 +1323,12 @@ if not df_podas.empty:
         st.subheader("🎯 Projeção para Créditos de Carbono (20 anos com entrada contínua)")
         
         st.info(f"""
-        **Metodologia avançada:** Este cálculo considera **entrada contínua de resíduos** (mesma massa de 2023 a cada ano)
+        **Metodologia avançada:** Este cálculo considera **entrada contínua de resíduos** (mesma massa de {ano_selecionado} a cada ano)
         e o **decaimento acumulado das emissões no aterro ao longo de {ANOS_PROJECAO_CREDITOS} anos**,
         conforme modelo do IPCC 2006 e implementado no script original tco2e.
         
         - **Período:** {ANOS_PROJECAO_CREDITOS} anos (padrão para projetos de créditos de carbono)
-        - **Entrada anual:** {formatar_numero_br(massa_total_aterro_t)} t/ano (mantendo massa de 2023)
+        - **Entrada anual:** {formatar_numero_br(massa_total_aterro_t)} t/ano (mantendo massa de {ano_selecionado})
         - **Total massa em 20 anos:** {formatar_numero_br(massa_total_aterro_t * ANOS_PROJECAO_CREDITOS)} t
         - **Constante de decaimento (k):** {k_ano} ano⁻¹
         - **GWP CH₄ (20 anos):** {GWP_CH4_20}
@@ -1326,7 +1343,7 @@ if not df_podas.empty:
         
         for _, row in df_podas_destino.iterrows():
             destino = row[COL_DESTINO]
-            massa_t_ano = row["MASSA_FLOAT"]  # Massa ANUAL de 2023
+            massa_t_ano = row["MASSA_FLOAT"]  # Massa ANUAL do ano selecionado
             mcf = row["MCF"]
             
             if mcf > 0 and massa_t_ano > 0:
@@ -1695,4 +1712,4 @@ else:
 # Rodapé
 # =========================================================
 st.markdown("---")
-st.caption("Fonte: SNIS – Sistema Nacional de Informações sobre Saneamento | Metodologia: IPCC 2006, Yang et al. (2017) | Cotações atualizadas automaticamente via Investing.com e APIs de câmbio | Projeção de créditos de carbono: 20 anos com entrada contínua e decaimento acumulado (k = 0.06 ano⁻¹)")
+st.caption(f"Fonte: SNIS – Sistema Nacional de Informações sobre Saneamento (ano {ano_selecionado}) | Metodologia: IPCC 2006, Yang et al. (2017) | Cotações atualizadas automaticamente via Investing.com e APIs de câmbio | Projeção de créditos de carbono: 20 anos com entrada contínua e decaimento acumulado (k = 0.06 ano⁻¹)")
