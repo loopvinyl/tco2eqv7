@@ -259,9 +259,8 @@ Ri_ORGANICO = 0.0  # Metano recuperado
 # Constante de decaimento (fixa como no script anexo)
 k_ano_ORGANICO = 0.06  # Constante de decaimento anual
 
-# GWP (IPCC AR6)
+# GWP (IPCC AR6) - APENAS CH4
 GWP_CH4_20 = 79.7  # Para comparabilidade com script original
-GWP_N2O_20 = 273   # Para comparabilidade com script original
 
 # Período de Simulação (20 anos para projeção de créditos)
 ANOS_PROJECAO_CREDITOS = 20
@@ -288,9 +287,9 @@ k_ano_PODAS = 0.03  # Materiais lignocelulósicos decompõem mais lentamente
 TOC_YANG_ORGANICO = 0.436  # Fração de carbono orgânico total
 TN_YANG_ORGANICO = 14.2 / 1000  # Fração de nitrogênio total
 CH4_C_FRAC_YANG_ORGANICO = 0.13 / 100  # Fração do TOC emitida como CH4-C (fixo)
-N2O_N_FRAC_YANG_ORGANICO = 0.92 / 100  # Fração do TN emitida como N2O-N (fixo)
+N2O_N_FRAC_YANG_ORGANICO = 0.92 / 100  # Fração do TN emitida como N2O-N (fixo) - NÃO USADO
 CH4_C_FRAC_THERMO_ORGANICO = 0.006  # Fixo
-N2O_N_FRAC_THERMO_ORGANICO = 0.0196  # Fixo
+N2O_N_FRAC_THERMO_ORGANICO = 0.0196  # Fixo - NÃO USADO
 DIAS_COMPOSTAGEM_ORGANICO = 50  # Período total de compostagem
 
 # =========================================================
@@ -299,9 +298,9 @@ DIAS_COMPOSTAGEM_ORGANICO = 50  # Período total de compostagem
 TOC_YANG_PODAS = 0.50  # AUMENTADO (madeira tem ~50% carbono)
 TN_YANG_PODAS = 5.0 / 1000  # REDUZIDO drasticamente (baixo teor de nitrogênio em madeira)
 CH4_C_FRAC_YANG_PODAS = 0.02 / 100  # REDUZIDO (menor produção de CH4 em materiais lenhosos)
-N2O_N_FRAC_YANG_PODAS = 0.10 / 100  # REDUZIDO (menor produção de N2O)
+N2O_N_FRAC_YANG_PODAS = 0.10 / 100  # REDUZIDO (menor produção de N2O) - NÃO USADO
 CH4_C_FRAC_THERMO_PODAS = 0.001  # REDUZIDO drasticamente
-N2O_N_FRAC_THERMO_PODAS = 0.005  # REDUZIDO
+N2O_N_FRAC_THERMO_PODAS = 0.005  # REDUZIDO - NÃO USADO
 DIAS_COMPOSTAGEM_PODAS = 90  # AUMENTADO (decomposição mais lenta)
 
 # =========================================================
@@ -370,37 +369,6 @@ def calcular_ch4_total_aterro_20anos(massa_t_ano, mcf, tipo_residuo='organico'):
     total_ch4_aterro_t = total_ch4_aterro_kg / 1000
     
     return total_ch4_aterro_t
-
-def calcular_emissoes_n2o_entrada_continua(massa_kg_dia, dias_simulacao=DIAS_PROJECAO):
-    """
-    Calcula emissões de N2O do aterro com entrada contínua
-    Adaptado do script original tco2e
-    """
-    # Perfil temporal N2O (Wang et al. 2017) - para decomposição gradual
-    PERFIL_N2O = {1: 0.10, 2: 0.30, 3: 0.40, 4: 0.15, 5: 0.05}
-    
-    # Valores de referência (E_aberto e E_fechado do script original)
-    E_aberto = 1.91  # mg N2O-N/kg/dia para aterro aberto
-    E_fechado = 2.15  # mg N2O-N/kg/dia para aterro fechado
-    
-    # Fator de exposição (assumindo 50% aberto, 50% fechado como padrão)
-    f_aberto = 0.5  # Pode ser ajustado se necessário
-    
-    E_medio = f_aberto * E_aberto + (1 - f_aberto) * E_fechado
-    
-    # Converter para kg N2O/dia
-    emissao_diaria_N2O_kg = (E_medio * (44/28) / 1_000_000) * massa_kg_dia
-    
-    # Kernel N2O (perfil de 5 dias)
-    kernel_n2o = np.array([PERFIL_N2O.get(d, 0) for d in range(1, 6)], dtype=float)
-    
-    # Entradas diárias CONSTANTES
-    entradas_diarias = np.full(dias_simulacao, emissao_diaria_N2O_kg)
-    
-    # Convolução para distribuir emissões ACUMULADAS
-    emissoes_N2O = fftconvolve(entradas_diarias, kernel_n2o, mode='full')[:dias_simulacao]
-    
-    return emissoes_N2O  # kg N2O por dia
 
 def calcular_emissoes_compostagem_entrada_continua(massa_kg_dia, dias_simulacao=DIAS_PROJECAO, tipo_residuo='organico'):
     """
@@ -529,36 +497,43 @@ def calcular_emissoes_vermicompostagem_entrada_continua(massa_kg_dia, dias_simul
 def calcular_emissoes_totais_entrada_continua(massa_t_ano, mcf, tipo_residuo='organico'):
     """
     Calcula emissões totais ao longo de 20 anos considerando ENTRADA CONTÍNUA ANUAL
-    (mesma massa de 2023 a cada ano) e decaimento acumulado
+    (mesma massa de 2023 a cada ano) e decaimento acumulado - APENAS CH4
     """
+    if massa_t_ano <= 0 or mcf <= 0:
+        return {
+            'co2eq_aterro_total': 0,
+            'co2eq_evitado_compostagem': 0,
+            'co2eq_evitado_vermicompostagem': 0,
+            'co2eq_evitado_medio_anual_compostagem': 0,
+            'co2eq_evitado_medio_anual_vermicompostagem': 0,
+            'ch4_aterro_total': 0,
+            'massa_anual_considerada': 0,
+            'massa_total_20_anos': 0
+        }
+    
     # Converter massa anual para diária (kg/dia)
     # Supondo que a massa anual de 2023 se repete todos os anos
     massa_kg_dia = (massa_t_ano * 1000) / 365
     
-    # Calcular emissões diárias com entrada contínua
+    # Calcular emissões diárias com entrada contínua (APENAS CH4)
     emissoes_ch4_aterro_dia = calcular_emissoes_aterro_entrada_continua(massa_kg_dia, mcf, DIAS_PROJECAO, tipo_residuo)
-    emissoes_n2o_aterro_dia = calcular_emissoes_n2o_entrada_continua(massa_kg_dia, DIAS_PROJECAO)
     
-    # Calcular emissões de tratamento biológico com entrada contínua
+    # Calcular emissões de tratamento biológico com entrada contínua (APENAS CH4)
     emissoes_ch4_compostagem_dia = calcular_emissoes_compostagem_entrada_continua(massa_kg_dia, DIAS_PROJECAO, tipo_residuo)
     emissoes_ch4_vermicompostagem_dia = calcular_emissoes_vermicompostagem_entrada_continua(massa_kg_dia, DIAS_PROJECAO, tipo_residuo)
     
     # Somar emissões diárias para obter totais
     total_ch4_aterro_kg = emissoes_ch4_aterro_dia.sum()
-    total_n2o_aterro_kg = emissoes_n2o_aterro_dia.sum()
-    
     total_ch4_compostagem_kg = emissoes_ch4_compostagem_dia.sum()
     total_ch4_vermicompostagem_kg = emissoes_ch4_vermicompostagem_dia.sum()
     
     # Converter para toneladas
     total_ch4_aterro_t = total_ch4_aterro_kg / 1000
-    total_n2o_aterro_t = total_n2o_aterro_kg / 1000
-    
     total_ch4_compostagem_t = total_ch4_compostagem_kg / 1000
     total_ch4_vermicompostagem_t = total_ch4_vermicompostagem_kg / 1000
     
-    # Calcular CO₂ equivalente (usando GWP de 20 anos do script original)
-    co2eq_aterro = (total_ch4_aterro_t * GWP_CH4_20) + (total_n2o_aterro_t * GWP_N2O_20)
+    # Calcular CO₂ equivalente (usando GWP de 20 anos do script original) - APENAS CH4
+    co2eq_aterro = total_ch4_aterro_t * GWP_CH4_20
     co2eq_compostagem = total_ch4_compostagem_t * GWP_CH4_20
     co2eq_vermicompostagem = total_ch4_vermicompostagem_t * GWP_CH4_20
     
@@ -580,21 +555,20 @@ def calcular_emissoes_totais_entrada_continua(massa_t_ano, mcf, tipo_residuo='or
 def calcular_emissoes_diarias_detalhadas(massa_t_ano, mcf, tipo_residuo='organico'):
     """
     Calcula emissões diárias detalhadas para criar gráficos
-    Retorna DataFrame com datas e emissões diárias em tCO₂eq
+    Retorna DataFrame com datas e emissões diárias em tCO₂eq - APENAS CH4
     """
     # Converter massa anual para diária (kg/dia)
     massa_kg_dia = (massa_t_ano * 1000) / 365
     
-    # Calcular emissões diárias com entrada contínua
+    # Calcular emissões diárias com entrada contínua (APENAS CH4)
     emissoes_ch4_aterro_dia = calcular_emissoes_aterro_entrada_continua(massa_kg_dia, mcf, DIAS_PROJECAO, tipo_residuo)
-    emissoes_n2o_aterro_dia = calcular_emissoes_n2o_entrada_continua(massa_kg_dia, DIAS_PROJECAO)
     
-    # Calcular emissões de tratamento biológico com entrada contínua
+    # Calcular emissões de tratamento biológico com entrada contínua (APENAS CH4)
     emissoes_ch4_compostagem_dia = calcular_emissoes_compostagem_entrada_continua(massa_kg_dia, DIAS_PROJECAO, tipo_residuo)
     emissoes_ch4_vermicompostagem_dia = calcular_emissoes_vermicompostagem_entrada_continua(massa_kg_dia, DIAS_PROJECAO, tipo_residuo)
     
-    # Converter para tCO₂eq diário
-    emissoes_aterro_tco2eq_dia = (emissoes_ch4_aterro_dia * GWP_CH4_20 + emissoes_n2o_aterro_dia * GWP_N2O_20) / 1000
+    # Converter para tCO₂eq diário - APENAS CH4
+    emissoes_aterro_tco2eq_dia = (emissoes_ch4_aterro_dia * GWP_CH4_20) / 1000
     emissoes_compostagem_tco2eq_dia = (emissoes_ch4_compostagem_dia * GWP_CH4_20) / 1000
     emissoes_vermicompostagem_tco2eq_dia = (emissoes_ch4_vermicompostagem_dia * GWP_CH4_20) / 1000
     
@@ -859,7 +833,7 @@ if not df_organicos.empty:
         ch4_evitado_20anos_comp_organicos = ch4_total_aterro_20anos_organicos - ch4_comp_total_t_20anos_organicos
         ch4_evitado_20anos_vermi_organicos = ch4_total_aterro_20anos_organicos - ch4_vermi_total_t_20anos_organicos
         
-        # Calcular CO₂ equivalente (20 anos) usando GWP de 20 anos
+        # Calcular CO₂ equivalente (20 anos) usando GWP de 20 anos - APENAS CH4
         co2eq_evitado_20anos_comp_organicos = ch4_evitado_20anos_comp_organicos * GWP_CH4_20
         co2eq_evitado_20anos_vermi_organicos = ch4_evitado_20anos_vermi_organicos * GWP_CH4_20
         
@@ -914,6 +888,7 @@ if not df_organicos.empty:
         - **DOC:** {DOC_ORGANICO} (carbono orgânico degradável)
         - **TOC:** {TOC_YANG_ORGANICO} (carbono orgânico total)
         - **Fator de emissão CH₄ compostagem:** {CH4_C_FRAC_THERMO_ORGANICO}
+        - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
         """)
         
         # =============================================================================
@@ -933,6 +908,7 @@ if not df_organicos.empty:
         - **Constante de decaimento (k):** {k_ano_ORGANICO} ano⁻¹
         - **GWP CH₄ (20 anos):** {GWP_CH4_20}
         - **Considera decomposição gradual** dos resíduos de todos os anos
+        - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
         """)
         
         # Calcular emissões COM ENTRADA CONTÍNUA para cada tipo de aterro (orgânicos)
@@ -987,14 +963,14 @@ if not df_organicos.empty:
                 st.metric(
                     "Linha de Base total (tCO₂e)",
                     f"{formatar_numero_br(co2eq_total_aterro_20anos_organicos, 1)} tCO₂e",
-                    help="Emissões acumuladas do aterro em 20 anos"
+                    help="Emissões acumuladas do aterro em 20 anos (APENAS CH₄)"
                 )
             
             with col3:
                 st.metric(
                     "Emissões Evitadas - Compostagem (tCO₂e)",
                     f"{formatar_numero_br(co2eq_total_evitado_compostagem_20anos_organicos, 1)} tCO₂e",
-                    help="Emissões evitadas com compostagem em 20 anos"
+                    help="Emissões evitadas com compostagem em 20 anos (APENAS CH₄)"
                 )
             
             # =============================================================================
@@ -1095,6 +1071,7 @@ if not df_organicos.empty:
             3. Podem ser tratados **localmente**, reduzindo custos de transporte
             4. A **área entre as curvas** representa os créditos de carbono gerados
             5. Curva do aterro mostra o **efeito do decaimento exponencial** (k = {k_ano_ORGANICO} ano⁻¹)
+            6. **⚠️ APENAS CH₄:** Este gráfico considera somente emissões de metano (CH₄)
             """)
             
             # =============================================================================
@@ -1171,14 +1148,14 @@ if not df_organicos.empty:
                 st.metric(
                     "Emissões Evitadas (tCO₂e)",
                     f"{formatar_br(co2eq_total_evitado_compostagem_20anos_organicos)} tCO₂e",
-                    help=f"Total em {ANOS_PROJECAO_CREDITOS} anos com entrada contínua"
+                    help=f"Total em {ANOS_PROJECAO_CREDITOS} anos com entrada contínua (APENAS CH₄)"
                 )
             
             with col2:
                 st.metric(
                     "Média anual (tCO₂e/ano)",
                     f"{formatar_br(media_anual_evitado_compostagem_organicos)} tCO₂e/ano",
-                    help="Média anual (total ÷ 20)"
+                    help="Média anual (total ÷ 20) - APENAS CH₄"
                 )
             
             with col3:
@@ -1220,14 +1197,14 @@ if not df_organicos.empty:
                 st.metric(
                     "Emissões Evitadas (tCO₂e)",
                     f"{formatar_br(co2eq_total_evitado_vermicompostagem_20anos_organicos)} tCO₂e",
-                    help=f"Total em {ANOS_PROJECAO_CREDITOS} anos com entrada contínua"
+                    help=f"Total em {ANOS_PROJECAO_CREDITOS} anos com entrada contínua (APENAS CH₄)"
                 )
             
             with col2:
                 st.metric(
                     "Média anual (tCO₂e/ano)",
                     f"{formatar_br(media_anual_evitado_vermicompostagem_organicos)} tCO₂e/ano",
-                    help="Média anual (total ÷ 20)"
+                    help="Média anual (total ÷ 20) - APENAS CH₄"
                 )
             
             with col3:
@@ -1289,6 +1266,8 @@ if not df_organicos.empty:
                 - **Alto teor de matéria orgânica**, ideal para compostagem/vermicompostagem
                 - Podem ser tratados **localmente**, reduzindo custos de transporte
                 - **Alto potencial de geração de créditos** devido à massa significativa
+                
+                **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
                 """)
             
             # Nota sobre atualização automática
@@ -1299,6 +1278,7 @@ if not df_organicos.empty:
             - Taxa de câmbio atual: **1 Euro = R$ {formatar_br(taxa_cambio)}**
             - **Emissões Evitadas totais (orgânicos):** {formatar_br(co2eq_total_evitado_compostagem_20anos_organicos)} tCO₂e
             - **Valor total dos créditos (orgânicos):** {moeda_carbono} {formatar_br(valor_total_euros_20anos_comp_organicos)} (ou R$ {formatar_br(valor_total_reais_20anos_comp_organicos)})
+            - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
             """)
         
         else:
@@ -1314,6 +1294,7 @@ if not df_organicos.empty:
         - Já estão **segregados na fonte**, reduzindo custos de triagem
         - **Alto potencial de geração de créditos de carbono** devido à massa significativa
         - Podem ser tratados **localmente**, reduzindo custos de transporte
+        - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
         """)
 else:
     st.info("ℹ️ Não foram encontrados registros de coleta seletiva de resíduos orgânicos para o município selecionado.")
@@ -1423,6 +1404,7 @@ if not df_podas.empty:
         - **TOC:** {TOC_YANG_PODAS} (aumentado - madeira tem ~50% C)
         - **Fator de emissão CH₄ compostagem:** {CH4_C_FRAC_THERMO_PODAS} (reduzido drasticamente)
         - **Período de compostagem:** {DIAS_COMPOSTAGEM_PODAS} dias (aumentado)
+        - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
         """)
         
         # =============================================================================
@@ -1449,6 +1431,7 @@ if not df_podas.empty:
         - **Constante de decaimento (k):** {k_ano_PODAS} ano⁻¹ (reduzida)
         - **GWP CH₄ (20 anos):** {GWP_CH4_20}
         - **Considera decomposição gradual** dos resíduos de todos os anos
+        - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
         """)
         
         # Calcular emissões COM ENTRADA CONTÍNUA para cada tipo de aterro (APENAS COMPOSTAGEM)
@@ -1499,14 +1482,14 @@ if not df_podas.empty:
                 st.metric(
                     "Linha de Base total (tCO₂e)",
                     f"{formatar_numero_br(co2eq_total_aterro_20anos, 1)} tCO₂e",
-                    help="Emissões acumuladas do aterro em 20 anos"
+                    help="Emissões acumuladas do aterro em 20 anos (APENAS CH₄)"
                 )
             
             with col3:
                 st.metric(
                     "Emissões Evitadas - Compostagem (tCO₂e)",
                     f"{formatar_numero_br(co2eq_total_evitado_compostagem_20anos, 1)} tCO₂e",
-                    help="Emissões evitadas com compostagem em 20 anos"
+                    help="Emissões evitadas com compostagem em 20 anos (APENAS CH₄)"
                 )
             
             # =============================================================================
@@ -1600,6 +1583,7 @@ if not df_podas.empty:
             3. **Fatores de emissão reduzidos** para compostagem de materiais lenhosos
             4. **Período de compostagem estendido** ({DIAS_COMPOSTAGEM_PODAS} dias vs {DIAS_COMPOSTAGEM_ORGANICO} dias para orgânicos)
             5. **Somente compostagem** (sem vermicompostagem) devido às características dos materiais
+            6. **⚠️ APENAS CH₄:** Este gráfico considera somente emissões de metano (CH₄)
             """)
             
             # =============================================================================
@@ -1666,14 +1650,14 @@ if not df_podas.empty:
                 st.metric(
                     "Emissões Evitadas (tCO₂e)",
                     f"{formatar_br(co2eq_total_evitado_compostagem_20anos)} tCO₂e",
-                    help=f"Total em {ANOS_PROJECAO_CREDITOS} anos com entrada contínua"
+                    help=f"Total em {ANOS_PROJECAO_CREDITOS} anos com entrada contínua (APENAS CH₄)"
                 )
             
             with col2:
                 st.metric(
                     "Média anual (tCO₂e/ano)",
                     f"{formatar_br(media_anual_evitado_compostagem)} tCO₂e/ano",
-                    help="Média anual (total ÷ 20)"
+                    help="Média anual (total ÷ 20) - APENAS CH₄"
                 )
             
             with col3:
@@ -1736,6 +1720,7 @@ if not df_podas.empty:
                 - **Constante de decaimento reduzida** (k = {k_ano_PODAS} ano⁻¹)
                 - **Período de compostagem estendido** ({DIAS_COMPOSTAGEM_PODAS} dias)
                 - **Menor geração de CH₄** devido à natureza aeróbica dos resíduos
+                - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
                 """)
             
             # Nota sobre atualização automática
@@ -1753,6 +1738,7 @@ if not df_podas.empty:
             - **Decomposição mais lenta:** k = {k_ano_PODAS} ano⁻¹ (vs {k_ano_ORGANICO} ano⁻¹)
             - **Menor produção de CH₄:** Fatores de emissão reduzidos
             - **Somente compostagem:** Não recomendada vermicompostagem
+            - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
             """)
             
         else:
@@ -1770,6 +1756,7 @@ if not df_podas.empty:
         - **Alta relação C/N**, exigindo processo de compostagem mais longo
         - **Menor produção de CH₄** devido à natureza aeróbica dos resíduos
         - **Somente compostagem** é recomendada (sem vermicompostagem)
+        - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
         """)
     
 else:
@@ -1785,5 +1772,6 @@ Metodologia: IPCC 2006, Yang et al. (2017) - Parâmetros ajustados por tipo de r
 Cotações atualizadas automaticamente via Investing.com e APIs de câmbio | 
 Projeção de créditos de carbono: 20 anos com entrada contínua e decaimento acumulado | 
 **RESÍDUOS ORGÂNICOS:** k = {k_ano_ORGANICO} ano⁻¹, DOC = {DOC_ORGANICO}, TOC = {TOC_YANG_ORGANICO} | 
-**PODAS E GALHADAS:** k = {k_ano_PODAS} ano⁻¹, DOC = {DOC_PODAS}, TOC = {TOC_YANG_PODAS}
+**PODAS E GALHADAS:** k = {k_ano_PODAS} ano⁻¹, DOC = {DOC_PODAS}, TOC = {TOC_YANG_PODAS} |
+**⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄), não incluindo N₂O
 """)
