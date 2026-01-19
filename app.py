@@ -1,143 +1,93 @@
+import streamlit as st
 import pandas as pd
 
-# =========================================================
-# 1. PARÂMETROS GERAIS (INVENTÁRIO)
-# =========================================================
-
-# GWP – IPCC AR6 (20 anos, conservador para resíduos)
-GWP_CH4 = 79.7
-GWP_N2O = 273
-
-# Aterro sanitário (IPCC 2006)
-MCF = 1.0
-F = 0.5
-OX = 0.1
-DOCF = 0.5
-
-# Compostagem (valores médios literatura – Yang et al.)
-FATOR_CH4_COMPOST = 0.004   # t CH4 / t resíduo
-FATOR_N2O_COMPOST = 0.0003  # t N2O / t resíduo
+from inventory import calcular_credito_carbono
+from valuation import valorar_creditos
 
 # =========================================================
-# 2. FATORES POR TIPO DE RESÍDUO
+# CONFIGURAÇÃO DA PÁGINA
 # =========================================================
 
-RESIDUOS = {
-    "podas": {
-        "DOC": 0.20,
-        "descricao": "Podas e galhadas urbanas"
-    },
-    "organico_domiciliar": {
-        "DOC": 0.15,
-        "descricao": "Resíduo orgânico domiciliar"
-    },
-    "feira": {
-        "DOC": 0.18,
-        "descricao": "Resíduos de feiras livres"
-    }
-}
+st.set_page_config(
+    page_title="Simulador de Créditos de Carbono – Compostagem",
+    layout="wide"
+)
+
+st.title("🌱 Simulador de Créditos de Carbono")
+st.markdown("""
+Avaliação **técnica e econômica** do desvio de resíduos orgânicos
+do aterro sanitário para compostagem.
+""")
 
 # =========================================================
-# 3. FUNÇÕES DE CÁLCULO
+# SIDEBAR – PARÂMETROS
 # =========================================================
 
-def emissoes_aterro(massa_t, DOC):
-    """
-    Emissões de CH4 no aterro (tCO2e)
-    """
-    ch4_t = massa_t * DOC * DOCF * MCF * F * (16/12) * (1 - OX)
-    co2e = ch4_t * GWP_CH4
-    return co2e
+st.sidebar.header("⚙️ Parâmetros do Projeto")
 
+massa = st.sidebar.number_input(
+    "Massa anual de resíduos (t/ano)",
+    min_value=100.0,
+    max_value=1_000_000.0,
+    value=12_000.0,
+    step=500.0
+)
 
-def emissoes_compostagem(massa_t):
-    """
-    Emissões residuais da compostagem (tCO2e)
-    """
-    ch4 = massa_t * FATOR_CH4_COMPOST
-    n2o = massa_t * FATOR_N2O_COMPOST
-    co2e = ch4 * GWP_CH4 + n2o * GWP_N2O
-    return co2e
+tipo_residuo = st.sidebar.selectbox(
+    "Tipo de resíduo",
+    ["podas", "organico_domiciliar", "feira"]
+)
 
-
-def calcular_credito(massa_t, tipo_residuo):
-    """
-    Crédito de carbono líquido
-    """
-    DOC = RESIDUOS[tipo_residuo]["DOC"]
-
-    baseline = emissoes_aterro(massa_t, DOC)
-    projeto = emissoes_compostagem(massa_t)
-    reducao = baseline - projeto
-
-    return baseline, projeto, reducao
+executar = st.sidebar.button("🚀 Calcular")
 
 # =========================================================
-# 4. VALORAÇÃO ECONÔMICA (HONESTA)
+# EXECUÇÃO
 # =========================================================
 
-PRECOS = {
-    "conservador": 5,   # €/tCO2e
-    "medio": 12,
-    "otimista": 25
-}
+if executar:
+    baseline, projeto, reducao = calcular_credito_carbono(
+        massa_t=massa,
+        tipo_residuo=tipo_residuo
+    )
 
-def valorar(reducao_tco2e):
-    valores = {}
-    for cenario, preco in PRECOS.items():
-        valores[cenario] = reducao_tco2e * preco
-    return valores
+    valores = valorar_creditos(reducao)
 
-# =========================================================
-# 5. EXECUÇÃO DO CENÁRIO
-# =========================================================
+    # =====================================================
+    # RESULTADOS
+    # =====================================================
 
-# >>>>>>>>>>>>>>>> AJUSTE AQUI <<<<<<<<<<<<<<<<
-massa_anual = 12000  # toneladas/ano
-tipo = "podas"
-# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    st.header("📊 Resultados Ambientais")
 
-baseline, projeto, reducao = calcular_credito(massa_anual, tipo)
-valores = valorar(reducao)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Baseline – Aterro", f"{baseline:,.0f} tCO₂e")
+    col2.metric("Projeto – Compostagem", f"{projeto:,.0f} tCO₂e")
+    col3.metric("Redução Líquida", f"{reducao:,.0f} tCO₂e")
 
-# =========================================================
-# 6. RESULTADOS
-# =========================================================
+    st.header("💰 Valoração Econômica (referência)")
 
-resultado = pd.DataFrame({
-    "Indicador": [
-        "Emissões no aterro (baseline)",
-        "Emissões da compostagem (projeto)",
-        "Redução líquida de emissões"
-    ],
-    "tCO2e": [
-        round(baseline, 2),
-        round(projeto, 2),
-        round(reducao, 2)
-    ]
-})
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Conservador (€5)", f"€ {valores['conservador']:,.0f}")
+    col2.metric("Médio (€12)", f"€ {valores['medio']:,.0f}")
+    col3.metric("Otimista (€25)", f"€ {valores['otimista']:,.0f}")
 
-print("\n📊 RESULTADO AMBIENTAL")
-print(resultado)
+    # =====================================================
+    # SAÍDA PARA BI
+    # =====================================================
 
-print("\n💰 VALOR POTENCIAL DE CRÉDITOS (€)")
-for k, v in valores.items():
-    print(f"- {k.capitalize():12}: € {v:,.2f}")
+    df = pd.DataFrame({
+        "residuo": [tipo_residuo],
+        "massa_t_ano": [massa],
+        "baseline_tco2e": [baseline],
+        "projeto_tco2e": [projeto],
+        "reducao_tco2e": [reducao],
+        **{f"valor_{k}_eur": [v] for k, v in valores.items()}
+    })
 
-# =========================================================
-# 7. SAÍDA PARA BI
-# =========================================================
+    st.download_button(
+        "📥 Baixar dados (CSV)",
+        df.to_csv(index=False),
+        file_name="credito_carbono_compostagem.csv"
+    )
 
-df_bi = pd.DataFrame({
-    "residuo": [tipo],
-    "massa_t_ano": [massa_anual],
-    "baseline_tco2e": [baseline],
-    "projeto_tco2e": [projeto],
-    "reducao_tco2e": [reducao],
-    "valor_conservador_eur": [valores["conservador"]],
-    "valor_medio_eur": [valores["medio"]],
-    "valor_otimista_eur": [valores["otimista"]],
-})
-
-df_bi.to_csv("potencial_credito_carbono.csv", index=False)
-print("\n📁 Arquivo gerado: potencial_credito_carbono.csv")
+else:
+    st.info("➡️ Ajuste os parâmetros e clique em **Calcular**.")
