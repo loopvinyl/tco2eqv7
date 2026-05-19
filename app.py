@@ -1,1777 +1,1129 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import unicodedata
-import requests
-from bs4 import BeautifulSoup
-import re
-from scipy.signal import fftconvolve
-from datetime import datetime, timedelta
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.ticker import FuncFormatter
+# IMPORTAÇÕES E CONFIGURAÇÕES INICIAIS
 
-# =========================================================
-# Configuração da página
-# =========================================================
+import requests
+import streamlit as st
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
+import seaborn as sns
+from scipy import stats
+from joblib import Parallel, delayed
+import warnings
+from matplotlib.ticker import FuncFormatter
+from SALib.sample.sobol import sample
+from SALib.analyze.sobol import analyze
+import yfinance as yf  # para obter cotação do carbono
+
+# [IA] Importações para rede neural e pré-processamento
+from sklearn.neural_network import MLPRegressor
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+import joblib
+import os
+
+# Semente fixa para reprodutibilidade
+np.random.seed(50)
+
+# Configuração da página Streamlit
 st.set_page_config(
-    page_title="Potencial de Compostagem de RSU",
+    page_title="Simulador de Emissões de tCO₂eq e Cálculo de Créditos de Carbono com Análise de Sensibilidade Global",
     layout="wide"
 )
 
-st.title("🌱 Potencial de Compostagem e Vermicompostagem por Município")
-st.markdown("""
-Este aplicativo interpreta os **tipos de coleta executada** informados pelos municípios
-e avalia o **potencial técnico para compostagem e vermicompostagem**
-de resíduos sólidos urbanos.
-""")
+# Suprimir warnings futuros e ajustar formatação
+warnings.filterwarnings("ignore", category=FutureWarning)
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', None)
+np.seterr(divide='ignore', invalid='ignore')
 
-# =========================================================
-# Seleção de Ano
-# =========================================================
-ano_selecionado = st.selectbox(
-    "Selecione o ano de referência:",
-    ["2023", "2024"],
-    index=1  # Padrão 2024
-)
+# Configurações de estilo para gráficos
+plt.rcParams['figure.dpi'] = 150
+plt.rcParams['font.size'] = 10
+sns.set_style("whitegrid")
 
-# =========================================================
-# URLs dos arquivos por ano
-# =========================================================
-URLS_POR_ANO = {
-    "2023": "https://github.com/loopvinyl/tco2eqv7/raw/main/rsuBrasil_2023.xlsx",
-    "2024": "https://github.com/loopvinyl/tco2eqv7/raw/main/rsuBrasil_2024.xlsx"
-}
 
-# =============================================================================
-# FUNÇÕES DE COTAÇÃO AUTOMÁTICA DO CARBONO E CÂMBIO
-# =============================================================================
+# CLASSE PARA CÁLCULO DE EMISSÕES DE GEE
 
-def obter_cotacao_carbono_investing():
+class GHGEmissionCalculator:
     """
-    Obtém a cotação em tempo real do carbono via web scraping do Investing.com
+    Calcula emissões de CH₄ e N₂O para:
+    - Aterro sanitário (baseline, método FOD do IPCC)
+    - Vermicompostagem
+    - Compostagem termofílica
+    Inclui correção φ (UNFCCC 2024) e fator de captura de metano.
     """
-    try:
-        url = "https://www.investing.com/commodities/carbon-emissions"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Referer': 'https://www.investing.com/'
+
+    def __init__(self):
+        # Parâmetros fixos baseados na literatura
+        self.TOC = 0.436                # Carbono orgânico total
+        self.TN = 0.0142                # Nitrogênio total
+        self.f_CH4_vermi = 0.0013       # Fração de CH4 na vermicompostagem
+        self.f_N2O_vermi = 0.0092       # Fração de N2O na vermicompostagem
+        self.f_CH4_thermo = 0.0060      # Fração de CH4 na compostagem termofílica
+        self.f_N2O_thermo = 0.0196      # Fração de N2O na compostagem termofílica
+        self.COMPOSTING_DAYS = 50       # Duração do processo de compostagem (dias)
+        self.GWP_CH4_20 = 79.7          # GWP-20 para CH4 (Forster et al. 2021)
+        self.GWP_N2O_20 = 273           # GWP-20 para N2O (Forster et al. 2021)
+        self.MCF = 1.0                  # Fator de correção de metano (aterro)
+        self.F = 0.5                    # Fração de metano no biogás
+        self.OX = 0.1                   # Fator de oxidação
+        self.Ri = 0.0                   # Fração recuperada (default 0)
+        self._load_emission_profiles()
+        self._setup_pre_disposal_emissions()
+
+    def _load_emission_profiles(self):
+        """Perfis temporais diários de emissões (fração por dia)."""
+        self.profile_ch4_vermi = np.array([
+            0.02, 0.02, 0.02, 0.03, 0.03, 0.04, 0.04, 0.05, 0.05, 0.06,
+            0.07, 0.08, 0.09, 0.10, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04,
+            0.03, 0.02, 0.02, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,
+            0.005, 0.005, 0.005, 0.005, 0.005, 0.005, 0.005, 0.005, 0.005, 0.005,
+            0.002, 0.002, 0.002, 0.002, 0.002, 0.001, 0.001, 0.001, 0.001, 0.001
+        ])
+        self.profile_ch4_vermi /= self.profile_ch4_vermi.sum()
+
+        self.profile_n2o_vermi = np.array([
+            0.15, 0.10, 0.20, 0.05, 0.03, 0.03, 0.03, 0.04, 0.05, 0.06,
+            0.08, 0.09, 0.10, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02,
+            0.01, 0.01, 0.005, 0.005, 0.005, 0.005, 0.005, 0.005, 0.005, 0.005,
+            0.002, 0.002, 0.002, 0.002, 0.002, 0.001, 0.001, 0.001, 0.001, 0.001,
+            0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001
+        ])
+        self.profile_n2o_vermi /= self.profile_n2o_vermi.sum()
+
+        self.profile_ch4_thermo = self.profile_ch4_vermi.copy()
+
+        self.profile_n2o_thermo = np.array([
+            0.10, 0.08, 0.15, 0.05, 0.03, 0.04, 0.05, 0.07, 0.10, 0.12,
+            0.15, 0.18, 0.20, 0.18, 0.15, 0.12, 0.10, 0.08, 0.06, 0.05,
+            0.04, 0.03, 0.02, 0.02, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,
+            0.005, 0.005, 0.005, 0.005, 0.005, 0.002, 0.002, 0.002, 0.002, 0.002,
+            0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001
+        ])
+        self.profile_n2o_thermo /= self.profile_n2o_thermo.sum()
+
+        self.profile_n2o_landfill = {1: 0.10, 2: 0.30, 3: 0.40, 4: 0.15, 5: 0.05}
+
+    def _setup_pre_disposal_emissions(self):
+        """Emissões na fase de pré-descarte (antes do tratamento)."""
+        # CH₄: taxa constante diária (2,78 μg C kg⁻¹ h⁻¹ → kg CH₄ kg⁻¹ dia⁻¹)
+        CH4_pre_ugC_per_kg_h = 2.78
+        self.CH4_pre_kg_per_kg_day = CH4_pre_ugC_per_kg_h * (16/12) * 24 / 1_000_000_000
+
+        # N₂O: emissão total nos 3 dias (20,26 mg N kg⁻¹, segundo Feng et al. 2020)
+        N2O_pre_mgN_per_kg_total = 20.26
+        # Fator de emissão total de N₂O em kg N₂O por kg de resíduo (para os 3 dias)
+        self.N2O_pre_kg_per_kg_total = N2O_pre_mgN_per_kg_total * (44/28) / 1_000_000
+
+        self.profile_n2o_pre = {1: 0.8623, 2: 0.10, 3: 0.0377}
+
+    def calculate_landfill_emissions(self, waste_kg_day, k_year, temperature_C,
+                                     doc_fraction, moisture_fraction, years=20,
+                                     phi=1.0, capture_fraction=0.0):
+        """
+        Emissões do aterro sanitário (método FOD do IPCC).
+        """
+        days = years * 365
+        docf = 0.0147 * temperature_C + 0.28
+        ch4_potential_per_kg = (doc_fraction * docf * self.MCF * self.F * (16/12) *
+                                (1 - self.Ri) * (1 - self.OX))
+        ch4_potential_daily = waste_kg_day * ch4_potential_per_kg
+
+        t = np.arange(1, days + 1, dtype=float)
+        kernel_ch4 = np.exp(-k_year * (t - 1) / 365.0) - np.exp(-k_year * t / 365.0)
+        daily_inputs = np.ones(days, dtype=float)
+        ch4_emissions = np.convolve(daily_inputs, kernel_ch4, mode='full')[:days]
+        ch4_emissions *= ch4_potential_daily
+        ch4_emissions = ch4_emissions * phi * (1 - capture_fraction)
+
+        # Emissões de N2O (Wang et al. 2017)
+        exposed_mass = 100
+        exposed_hours = 8
+        opening_factor = (exposed_mass / waste_kg_day) * (exposed_hours / 24)
+        opening_factor = np.clip(opening_factor, 0.0, 1.0)
+        E_open = 1.91
+        E_closed = 2.15
+        E_avg = opening_factor * E_open + (1 - opening_factor) * E_closed
+        moisture_factor = (1 - moisture_fraction) / (1 - 0.55)
+        E_avg_adjusted = E_avg * moisture_factor
+        daily_n2o_kg = (E_avg_adjusted * (44/28) / 1_000_000) * waste_kg_day
+
+        kernel_n2o = np.array([self.profile_n2o_landfill.get(d, 0) for d in range(1, 6)], dtype=float)
+        n2o_emissions = np.convolve(np.full(days, daily_n2o_kg), kernel_n2o, mode='full')[:days]
+
+        ch4_pre, n2o_pre = self._calculate_pre_disposal(waste_kg_day, days)
+        return ch4_emissions + ch4_pre, n2o_emissions + n2o_pre
+
+    def _calculate_pre_disposal(self, waste_kg_day, days):
+        """Emissões diárias durante o pré-descarte."""
+        ch4_emissions = np.full(days, waste_kg_day * self.CH4_pre_kg_per_kg_day)
+        n2o_emissions = np.zeros(days)
+        for entry_day in range(days):
+            for days_after, fraction in self.profile_n2o_pre.items():
+                emission_day = entry_day + days_after - 1
+                if emission_day < days:
+                    n2o_emissions[emission_day] += (waste_kg_day * self.N2O_pre_kg_per_kg_total * fraction)
+        return ch4_emissions, n2o_emissions
+
+    def calculate_vermicomposting_emissions(self, waste_kg_day, moisture_fraction, years=20):
+        """Emissões da vermicompostagem."""
+        days = years * 365
+        dry_fraction = 1 - moisture_fraction
+        ch4_per_batch = (waste_kg_day * self.TOC * self.f_CH4_vermi * (16/12) * dry_fraction)
+        n2o_per_batch = (waste_kg_day * self.TN * self.f_N2O_vermi * (44/28) * dry_fraction)
+        ch4_emissions = np.zeros(days)
+        n2o_emissions = np.zeros(days)
+        for entry_day in range(days):
+            for compost_day in range(self.COMPOSTING_DAYS):
+                emission_day = entry_day + compost_day
+                if emission_day < days:
+                    ch4_emissions[emission_day] += ch4_per_batch * self.profile_ch4_vermi[compost_day]
+                    n2o_emissions[emission_day] += n2o_per_batch * self.profile_n2o_vermi[compost_day]
+        return ch4_emissions, n2o_emissions
+
+    def calculate_thermophilic_emissions(self, waste_kg_day, moisture_fraction, years=20):
+        """Emissões da compostagem termofílica."""
+        days = years * 365
+        dry_fraction = 1 - moisture_fraction
+        ch4_per_batch = (waste_kg_day * self.TOC * self.f_CH4_thermo * (16/12) * dry_fraction)
+        n2o_per_batch = (waste_kg_day * self.TN * self.f_N2O_thermo * (44/28) * dry_fraction)
+        ch4_emissions = np.zeros(days)
+        n2o_emissions = np.zeros(days)
+        for entry_day in range(days):
+            for compost_day in range(self.COMPOSTING_DAYS):
+                emission_day = entry_day + compost_day
+                if emission_day < days:
+                    ch4_emissions[emission_day] += ch4_per_batch * self.profile_ch4_thermo[compost_day]
+                    n2o_emissions[emission_day] += n2o_per_batch * self.profile_n2o_thermo[compost_day]
+        return ch4_emissions, n2o_emissions
+
+    def calculate_avoided_emissions(self, waste_kg_day, k_year, temperature_C,
+                                    doc_fraction, moisture_fraction, years=20,
+                                    phi_baseline=0.85, capture_fraction=0.0):
+        """Calcula emissões evitadas (tCO₂eq)."""
+        ch4_landfill, n2o_landfill = self.calculate_landfill_emissions(
+            waste_kg_day, k_year, temperature_C, doc_fraction, moisture_fraction, years,
+            phi=phi_baseline, capture_fraction=capture_fraction
+        )
+        ch4_vermi, n2o_vermi = self.calculate_vermicomposting_emissions(waste_kg_day, moisture_fraction, years)
+        ch4_thermo, n2o_thermo = self.calculate_thermophilic_emissions(waste_kg_day, moisture_fraction, years)
+
+        baseline_co2eq = (ch4_landfill * self.GWP_CH4_20 + n2o_landfill * self.GWP_N2O_20) / 1000
+        vermi_co2eq = (ch4_vermi * self.GWP_CH4_20 + n2o_vermi * self.GWP_N2O_20) / 1000
+        thermo_co2eq = (ch4_thermo * self.GWP_CH4_20 + n2o_thermo * self.GWP_N2O_20) / 1000
+
+        avoided_vermi = baseline_co2eq.sum() - vermi_co2eq.sum()
+        avoided_thermo = baseline_co2eq.sum() - thermo_co2eq.sum()
+
+        results = {
+            'baseline': {
+                'ch4_kg': ch4_landfill.sum(),
+                'n2o_kg': n2o_landfill.sum(),
+                'co2eq_t': baseline_co2eq.sum()
+            },
+            'vermicomposting': {
+                'ch4_kg': ch4_vermi.sum(),
+                'n2o_kg': n2o_vermi.sum(),
+                'co2eq_t': vermi_co2eq.sum(),
+                'avoided_co2eq_t': avoided_vermi
+            },
+            'composting': {
+                'ch4_kg': ch4_thermo.sum(),
+                'n2o_kg': n2o_thermo.sum(),
+                'co2eq_t': thermo_co2eq.sum(),
+                'avoided_co2eq_t': avoided_thermo
+            },
+            'comparison': {
+                'difference_tco2eq': avoided_vermi - avoided_thermo,
+                'superiority_percent': ((avoided_vermi / avoided_thermo) - 1) * 100 if avoided_thermo != 0 else 0
+            },
+            'annual_averages': {
+                'baseline_tco2eq_year': baseline_co2eq.sum() / years,
+                'vermi_avoided_year': avoided_vermi / years,
+                'thermo_avoided_year': avoided_thermo / years
+            }
         }
-        
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # Várias estratégias para encontrar o preço
-        selectores = [
-            '[data-test="instrument-price-last"]',
-            '.text-2xl',
-            '.last-price-value',
-            '.instrument-price-last',
-            '.pid-1062510-last',
-            '.float_lang_base_1',
-            '.top.bold.inlineblock',
-            '#last_last'
-        ]
-        
-        preco = None
-        fonte = "Investing.com"
-        
-        for seletor in selectores:
-            try:
-                elemento = soup.select_one(seletor)
-                if elemento:
-                    texto_preco = elemento.text.strip().replace(',', '')
-                    # Remover caracteres não numéricos exceto ponto
-                    texto_preco = ''.join(c for c in texto_preco if c.isdigit() or c == '.')
-                    if texto_preco:
-                        preco = float(texto_preco)
-                        break
-            except (ValueError, AttributeError):
-                continue
-        
-        if preco is not None:
-            return preco, "€", "Carbon Emissions Future", True, fonte
-        
-        # Tentativa alternativa: procurar por padrões numéricos no HTML
-        padroes_preco = [
-            r'"last":"([\d,]+)"',
-            r'data-last="([\d,]+)"',
-            r'last_price["\']?:\s*["\']?([\d,]+)',
-            r'value["\']?:\s*["\']?([\d,]+)'
-        ]
-        
-        html_texto = str(soup)
-        for padrao in padroes_preco:
-            matches = re.findall(padrao, html_texto)
-            for match in matches:
-                try:
-                    preco_texto = match.replace(',', '')
-                    preco = float(preco_texto)
-                    if 50 < preco < 200:  # Faixa razoável para carbono
-                        return preco, "€", "Carbon Emissions Future", True, fonte
-                except ValueError:
-                    continue
-                    
-        return None, None, None, False, fonte
-        
-    except Exception as e:
-        return None, None, None, False, f"Investing.com - Erro: {str(e)}"
+        return results
+
+
+# ==================== [IA] REDE NEURAL PARA PREVISÃO RÁPIDA ====================
+def gerar_dados_treino(n_samples=8000, anos_simulacao=20, waste_kg_day=100):
+    """
+    Gera dados de treinamento usando o simulador real.
+    Retorna: X (k, T, DOC, umidade), y_vermi, y_compost (emissões evitadas em tCO₂eq)
+    """
+    np.random.seed(42)
+    X = []
+    y_vermi = []
+    y_compost = []
+    calc = GHGEmissionCalculator()
+    phi_baseline = 0.85
+    capture_fraction = 0.0
+
+    k_range = (0.06, 0.40)
+    T_range = (20, 40)
+    DOC_range = (0.10, 0.25)
+    umidade_range = (0.75, 0.95)
+
+    for _ in range(n_samples):
+        k = np.random.uniform(*k_range)
+        T = np.random.uniform(*T_range)
+        DOC = np.random.uniform(*DOC_range)
+        umidade = np.random.uniform(*umidade_range)
+        res = calc.calculate_avoided_emissions(
+            waste_kg_day, k, T, DOC, umidade, anos_simulacao,
+            phi_baseline=phi_baseline, capture_fraction=capture_fraction
+        )
+        X.append([k, T, DOC, umidade])
+        y_vermi.append(res['vermicomposting']['avoided_co2eq_t'])
+        y_compost.append(res['composting']['avoided_co2eq_t'])
+    return np.array(X), np.array(y_vermi), np.array(y_compost)
+
+def treinar_modelos_ia(force_retrain=False):
+    """Treina ou carrega modelos salvos (vermi e compost) e o scaler."""
+    modelo_vermi_path = "modelo_vermi.pkl"
+    modelo_compost_path = "modelo_compost.pkl"
+    scaler_path = "scaler_emissao.pkl"
+
+    if not force_retrain and os.path.exists(modelo_vermi_path) and os.path.exists(modelo_compost_path) and os.path.exists(scaler_path):
+        modelo_vermi = joblib.load(modelo_vermi_path)
+        modelo_compost = joblib.load(modelo_compost_path)
+        scaler = joblib.load(scaler_path)
+        return modelo_vermi, modelo_compost, scaler
+
+    with st.spinner("🔁 Gerando dados e treinando redes neurais (pode levar 1-2 minutos)..."):
+        X, y_vermi, y_compost = gerar_dados_treino(n_samples=8000)
+        X_train, X_test, y_train_vermi, y_test_vermi = train_test_split(X, y_vermi, test_size=0.2, random_state=42)
+        _, _, y_train_compost, y_test_compost = train_test_split(X, y_compost, test_size=0.2, random_state=42)
+
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+
+        modelo_vermi = MLPRegressor(
+            hidden_layer_sizes=(64, 32, 16),
+            activation='relu',
+            solver='adam',
+            max_iter=500,
+            random_state=42,
+            early_stopping=True,
+            validation_fraction=0.1
+        )
+        modelo_vermi.fit(X_train_scaled, y_train_vermi)
+
+        modelo_compost = MLPRegressor(
+            hidden_layer_sizes=(64, 32, 16),
+            activation='relu',
+            solver='adam',
+            max_iter=500,
+            random_state=42,
+            early_stopping=True,
+            validation_fraction=0.1
+        )
+        modelo_compost.fit(X_train_scaled, y_train_compost)
+
+        # Salvar
+        joblib.dump(modelo_vermi, modelo_vermi_path)
+        joblib.dump(modelo_compost, modelo_compost_path)
+        joblib.dump(scaler, scaler_path)
+
+        # Avaliação
+        y_pred_vermi = modelo_vermi.predict(X_test_scaled)
+        y_pred_compost = modelo_compost.predict(X_test_scaled)
+        mae_vermi = np.mean(np.abs(y_pred_vermi - y_test_vermi))
+        mae_compost = np.mean(np.abs(y_pred_compost - y_test_compost))
+
+        st.success(f"✅ Modelos treinados! MAE Vermicompostagem: {mae_vermi:.2f} tCO₂eq | MAE Compostagem: {mae_compost:.2f} tCO₂eq")
+
+        # Gráfico de validação
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        ax1.scatter(y_test_vermi, y_pred_vermi, alpha=0.5)
+        ax1.plot([y_test_vermi.min(), y_test_vermi.max()], [y_test_vermi.min(), y_test_vermi.max()], 'r--')
+        ax1.set_xlabel("Simulação real (tCO₂eq)")
+        ax1.set_ylabel("Previsão IA (tCO₂eq)")
+        ax1.set_title("Vermicompostagem")
+        ax2.scatter(y_test_compost, y_pred_compost, alpha=0.5)
+        ax2.plot([y_test_compost.min(), y_test_compost.max()], [y_test_compost.min(), y_test_compost.max()], 'r--')
+        ax2.set_xlabel("Simulação real (tCO₂eq)")
+        ax2.set_ylabel("Previsão IA (tCO₂eq)")
+        ax2.set_title("Compostagem Termofílica")
+        st.pyplot(fig)
+        plt.close(fig)
+
+    return modelo_vermi, modelo_compost, scaler
+
+# =============================================================================
+# FUNÇÕES DE COTAÇÃO (MERCADO DE CARBONO E CÂMBIO)
+# =============================================================================
 
 def obter_cotacao_carbono():
-    """
-    Obtém a cotação em tempo real do carbono - usa apenas Investing.com
-    """
-    # Tentar via Investing.com
-    preco, moeda, contrato_info, sucesso, fonte = obter_cotacao_carbono_investing()
-    
-    if sucesso:
-        return preco, moeda, f"{contrato_info}", True, fonte
-    
-    # Fallback para valor padrão
-    return 85.50, "€", "Carbon Emissions (Referência)", False, "Referência"
+    """Obtém a cotação do carbono via Yahoo Finance (ticker CO2.L)."""
+    try:
+        ticker = yf.Ticker("CO2.L")
+        data = ticker.history(period="1d")
+        if not data.empty:
+            preco = data['Close'].iloc[-1]
+            if 10 < preco < 200:
+                return preco, "€", "Carbon Futures (CO2.L)", True, "Yahoo Finance (CO2.L)"
+        return 85.50, "€", "Carbon Emissions (Referência)", False, "Referência"
+    except Exception:
+        return 85.50, "€", "Carbon Emissions (Referência)", False, "Referência"
 
 def obter_cotacao_euro_real():
-    """
-    Obtém a cotação em tempo real do Euro em relação ao Real Brasileiro
-    """
+    """Obtém a cotação EUR/BRL."""
     try:
-        # API do BCB
         url = "https://economia.awesomeapi.com.br/last/EUR-BRL"
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            cotacao = float(data['EURBRL']['bid'])
-            return cotacao, "R$", True, "AwesomeAPI"
+            return float(data['EURBRL']['bid']), "R$", True, "AwesomeAPI"
     except:
         pass
-    
     try:
-        # Fallback para API alternativa
         url = "https://api.exchangerate-api.com/v4/latest/EUR"
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            cotacao = data['rates']['BRL']
-            return cotacao, "R$", True, "ExchangeRate-API"
+            return data['rates']['BRL'], "R$", True, "ExchangeRate-API"
     except:
         pass
-    
-    # Fallback para valor de referência
     return 5.50, "R$", False, "Referência"
 
 def calcular_valor_creditos(emissoes_evitadas_tco2eq, preco_carbono_por_tonelada, moeda, taxa_cambio=1):
-    """
-    Calcula o valor financeiro das emissões evitadas baseado no preço do carbono
-    """
-    valor_total = emissoes_evitadas_tco2eq * preco_carbono_por_tonelada * taxa_cambio
-    return valor_total
+    return emissoes_evitadas_tco2eq * preco_carbono_por_tonelada * taxa_cambio
 
-# Função para formatar números no padrão brasileiro
+# =============================================================================
+# FUNÇÕES AUXILIARES DE FORMATAÇÃO BRASILEIRA
+# =============================================================================
+
 def formatar_br(numero):
-    """
-    Formata números no padrão brasileiro: 1.234,56
-    """
-    if pd.isna(numero) or numero is None:
+    if pd.isna(numero):
         return "N/A"
-    
-    # Arredonda para 2 casas decimais
     numero = round(numero, 2)
-    
-    # Formata como string e substitui o ponto pela vírgula
     return f"{numero:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# Função de formatação para os gráficos (padrão brasileiro)
+def formatar_br_dec(numero, decimais=2):
+    if pd.isna(numero):
+        return "N/A"
+    numero = round(numero, decimais)
+    return f"{numero:,.{decimais}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
 def br_format(x, pos):
-    """
-    Função de formatação para eixos de gráficos (padrão brasileiro)
-    """
     if x == 0:
         return "0"
-    
-    # Para valores muito pequenos, usa notação científica
     if abs(x) < 0.01:
         return f"{x:.1e}".replace(".", ",")
-    
-    # Para valores grandes, formata com separador de milhar
     if abs(x) >= 1000:
         return f"{x:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    
-    # Para valores menores, mostra duas casas decimais
     return f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 # =============================================================================
-# FUNÇÕES AUXILIARES ORIGINAIS
+# INTERFACE STREAMLIT – BARRA LATERAL E EXIBIÇÃO DE COTAÇÕES
 # =============================================================================
 
-def formatar_numero_br(valor, casas_decimais=2):
-    if pd.isna(valor) or valor is None:
-        return "Não informado"
-    try:
-        num = float(valor)
-        formato = f"{{:,.{casas_decimais}f}}".format(num)
-        partes = formato.split(".")
-        milhar = partes[0].replace(",", "X").replace(".", ",").replace("X", ".")
-        return f"{milhar},{partes[1]}"
-    except:
-        return "Não informado"
+def exibir_cotacao_carbono():
+    """Exibe na barra lateral os preços do carbono e do câmbio EUR/BRL."""
+    st.sidebar.header("💰 Mercado de Carbono e Câmbio")
+    if not st.session_state.get('cotacao_carregada', False):
+        st.session_state.mostrar_atualizacao = True
+        st.session_state.cotacao_carregada = True
 
-def formatar_massa_br(valor):
-    if pd.isna(valor) or valor is None:
-        return "Não informado"
-    return f"{formatar_numero_br(valor)} t"
+    col1, col2 = st.sidebar.columns([3, 1])
+    with col1:
+        if st.button("🔄 Atualizar Cotações", key="atualizar_cotacoes"):
+            st.session_state.cotacao_atualizada = True
+            st.session_state.mostrar_atualizacao = True
 
-def normalizar_texto(txt):
-    if pd.isna(txt):
-        return ""
-    txt = unicodedata.normalize("NFKD", str(txt))
-    txt = txt.encode("ASCII", "ignore").decode("utf-8")
-    return txt.upper().strip()
+    if st.session_state.get('mostrar_atualizacao', False):
+        st.sidebar.info("🔄 Atualizando cotações...")
+        preco_carbono, moeda, _, _, fonte_carbono = obter_cotacao_carbono()
+        preco_euro, moeda_real, _, fonte_euro = obter_cotacao_euro_real()
+        st.session_state.preco_carbono = preco_carbono
+        st.session_state.moeda_carbono = moeda
+        st.session_state.taxa_cambio = preco_euro
+        st.session_state.moeda_real = moeda_real
+        st.session_state.fonte_cotacao = fonte_carbono
+        st.session_state.mostrar_atualizacao = False
+        st.session_state.cotacao_atualizada = False
+        st.rerun()
 
-def classificar_tipo_aterro(mcf):
-    """
-    Classifica o tipo de aterro baseado no valor do MCF.
-    """
-    if mcf >= 0.95:
-        return "Aterro Sanitário Gerenciado"
-    elif mcf >= 0.6:
-        return "Aterro Sanitário Não Gerenciado"
-    elif mcf > 0:
-        return "Aterro Controlado/Lixão"
-    else:
-        return "Não Aterro"
-
-# =========================================================
-# PARÂMETROS PARA CÁLCULO COM DECAIMENTO - RESÍDUOS ORGÂNICOS
-# =========================================================
-
-# Parâmetros fixos para RESÍDUOS ORGÂNICOS (IPCC 2006)
-T_ORGANICO = 25  # Temperatura média (ºC)
-DOC_ORGANICO = 0.15  # Carbono orgânico degradável (fração)
-MCF_ORGANICO = 1  # Fator de correção de metano (será ajustado por destino)
-F_ORGANICO = 0.5  # Fração de metano no biogás
-OX_ORGANICO = 0.1  # Fator de oxidação
-Ri_ORGANICO = 0.0  # Metano recuperado
-
-# Constante de decaimento (fixa como no script anexo)
-k_ano_ORGANICO = 0.06  # Constante de decaimento anual
-
-# GWP (IPCC AR6) - APENAS CH4
-GWP_CH4_20 = 79.7  # Para comparabilidade com script original
-
-# Período de Simulação (20 anos para projeção de créditos)
-ANOS_PROJECAO_CREDITOS = 20
-DIAS_PROJECAO = ANOS_PROJECAO_CREDITOS * 365
-
-# =========================================================
-# PARÂMETROS PARA CÁLCULO COM DECAIMENTO - PODAS E GALHADAS
-# =========================================================
-
-# Parâmetros fixos para PODAS E GALHADAS (materiais lignocelulósicos)
-T_PODAS = 25  # Temperatura média (ºC)
-DOC_PODAS = 0.10  # Carbono orgânico degradável - REDUZIDO para materiais lignocelulósicos
-MCF_PODAS = 0.5  # Fator de correção de metano REDUZIDO (mais aerobiose em resíduos lenhosos)
-F_PODAS = 0.3  # Fração de metano no biogás REDUZIDA
-OX_PODAS = 0.2  # Fator de oxidação AUMENTADO
-Ri_PODAS = 0.0  # Metano recuperado
-
-# Constante de decaimento - REDUZIDA para decomposição mais lenta
-k_ano_PODAS = 0.03  # Materiais lignocelulósicos decompõem mais lentamente
-
-# =========================================================
-# FATORES DE EMISSÃO - RESÍDUOS ORGÂNICOS (Yang et al. 2017)
-# =========================================================
-TOC_YANG_ORGANICO = 0.436  # Fração de carbono orgânico total
-TN_YANG_ORGANICO = 14.2 / 1000  # Fração de nitrogênio total
-CH4_C_FRAC_YANG_ORGANICO = 0.13 / 100  # Fração do TOC emitida como CH4-C (fixo)
-N2O_N_FRAC_YANG_ORGANICO = 0.92 / 100  # Fração do TN emitida como N2O-N (fixo) - NÃO USADO
-CH4_C_FRAC_THERMO_ORGANICO = 0.006  # Fixo
-N2O_N_FRAC_THERMO_ORGANICO = 0.0196  # Fixo - NÃO USADO
-DIAS_COMPOSTAGEM_ORGANICO = 50  # Período total de compostagem
-
-# =========================================================
-# FATORES DE EMISSÃO - PODAS E GALHADAS (ajustados para materiais lignocelulósicos)
-# =========================================================
-TOC_YANG_PODAS = 0.50  # AUMENTADO (madeira tem ~50% carbono)
-TN_YANG_PODAS = 5.0 / 1000  # REDUZIDO drasticamente (baixo teor de nitrogênio em madeira)
-CH4_C_FRAC_YANG_PODAS = 0.02 / 100  # REDUZIDO (menor produção de CH4 em materiais lenhosos)
-N2O_N_FRAC_YANG_PODAS = 0.10 / 100  # REDUZIDO (menor produção de N2O) - NÃO USADO
-CH4_C_FRAC_THERMO_PODAS = 0.001  # REDUZIDO drasticamente
-N2O_N_FRAC_THERMO_PODAS = 0.005  # REDUZIDO - NÃO USADO
-DIAS_COMPOSTAGEM_PODAS = 90  # AUMENTADO (decomposição mais lenta)
-
-# =========================================================
-# FUNÇÕES DE CÁLCULO COM ENTRADA CONTÍNUA E DECAIMENTO ACUMULADO
-# =========================================================
-
-def calcular_emissoes_aterro_entrada_continua(massa_kg_dia, mcf, dias_simulacao=DIAS_PROJECAO, tipo_residuo='organico'):
-    """
-    Calcula emissões de CH4 do aterro com entrada contínua diária e decaimento acumulado
-    Adaptado do script original tco2e - modelo de entrada contínua
-    """
-    # Selecionar parâmetros conforme o tipo de resíduo
-    if tipo_residuo == 'organico':
-        T = T_ORGANICO
-        DOC = DOC_ORGANICO
-        k_ano = k_ano_ORGANICO
-        F = F_ORGANICO
-        OX = OX_ORGANICO
-        Ri = Ri_ORGANICO
-    else:  # podas
-        T = T_PODAS
-        DOC = DOC_PODAS
-        k_ano = k_ano_PODAS
-        F = F_PODAS
-        OX = OX_PODAS
-        Ri = Ri_PODAS
-    
-    # Parâmetros IPCC 2006
-    DOCf = 0.0147 * T + 0.28  # Decomposable fraction of DOC
-    
-    # Calcular potencial diário de CH4
-    potencial_CH4_por_kg = DOC * DOCf * mcf * F * (16/12) * (1 - Ri) * (1 - OX)
-    potencial_CH4_diario_kg = massa_kg_dia * potencial_CH4_por_kg
-    
-    # Kernel de decaimento exponencial (igual ao script original)
-    t = np.arange(1, dias_simulacao + 1, dtype=float)
-    kernel_ch4 = np.exp(-k_ano * (t - 1) / 365.0) - np.exp(-k_ano * t / 365.0)
-    
-    # Entradas diárias CONSTANTES (massa_kg_dia todos os dias)
-    # Isso simula entrada contínua ao longo dos anos
-    entradas_diarias = np.ones(dias_simulacao, dtype=float) * potencial_CH4_diario_kg
-    
-    # Convolução para obter emissões com decaimento ACUMULADO
-    # Cada entrada diária contribui com emissões que decaem ao longo do tempo
-    emissoes_CH4 = fftconvolve(entradas_diarias, kernel_ch4, mode='full')[:dias_simulacao]
-    
-    return emissoes_CH4  # kg CH4 por dia
-
-def calcular_ch4_total_aterro_20anos(massa_t_ano, mcf, tipo_residuo='organico'):
-    """
-    Calcula o CH4 total gerado no aterro ao longo de 20 anos considerando entrada contínua e decaimento
-    Método IDÊNTICO ao do script tco2e original
-    """
-    if massa_t_ano <= 0 or mcf <= 0:
-        return 0.0
-    
-    # Converter massa anual para diária (kg/dia)
-    # Supondo que a massa anual de 2023 se repete todos os anos
-    massa_kg_dia = (massa_t_ano * 1000) / 365
-    
-    # Calcular emissões diárias com entrada contínua
-    emissoes_ch4_aterro_dia = calcular_emissoes_aterro_entrada_continua(massa_kg_dia, mcf, DIAS_PROJECAO, tipo_residuo)
-    
-    # Somar emissões diárias para obter total
-    total_ch4_aterro_kg = emissoes_ch4_aterro_dia.sum()
-    total_ch4_aterro_t = total_ch4_aterro_kg / 1000
-    
-    return total_ch4_aterro_t
-
-def calcular_emissoes_compostagem_entrada_continua(massa_kg_dia, dias_simulacao=DIAS_PROJECAO, tipo_residuo='organico'):
-    """
-    Calcula emissões de CH4 da compostagem com entrada contínua
-    Adaptado do script original tco2e
-    """
-    # Selecionar parâmetros conforme o tipo de resíduo
-    if tipo_residuo == 'organico':
-        TOC_YANG = TOC_YANG_ORGANICO
-        CH4_C_FRAC_THERMO = CH4_C_FRAC_THERMO_ORGANICO
-        DIAS_COMPOSTAGEM = DIAS_COMPOSTAGEM_ORGANICO
-    else:  # podas
-        TOC_YANG = TOC_YANG_PODAS
-        CH4_C_FRAC_THERMO = CH4_C_FRAC_THERMO_PODAS
-        DIAS_COMPOSTAGEM = DIAS_COMPOSTAGEM_PODAS
-    
-    # Perfil temporal baseado no tipo de resíduo
-    if tipo_residuo == 'organico':
-        PERFIL_CH4_THERMO = np.array([
-            0.01, 0.02, 0.03, 0.05, 0.08,  # Dias 1-5
-            0.12, 0.15, 0.18, 0.20, 0.18,  # Dias 6-10
-            0.15, 0.12, 0.10, 0.08, 0.06,  # Dias 11-15
-            0.05, 0.04, 0.03, 0.02, 0.02,  # Dias 16-20
-            0.01, 0.01, 0.01, 0.01, 0.01,  # Dias 21-25
-            0.005, 0.005, 0.005, 0.005, 0.005,  # Dias 26-30
-            0.002, 0.002, 0.002, 0.002, 0.002,  # Dias 31-35
-            0.001, 0.001, 0.001, 0.001, 0.001,  # Dias 36-40
-            0.001, 0.001, 0.001, 0.001, 0.001,  # Dias 41-45
-            0.001, 0.001, 0.001, 0.001, 0.001   # Dias 46-50
-        ])
-    else:  # podas - perfil de 90 dias
-        PERFIL_CH4_THERMO = np.array([
-            0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09,  # Dias 1-10
-            0.10, 0.11, 0.12, 0.13, 0.14, 0.15, 0.16, 0.17, 0.18, 0.18,  # Dias 11-20
-            0.18, 0.17, 0.16, 0.15, 0.14, 0.13, 0.12, 0.11, 0.10, 0.09,  # Dias 21-30
-            0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.03, 0.03, 0.03, 0.03,  # Dias 31-40
-            0.03, 0.03, 0.03, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02,  # Dias 41-50
-            0.02, 0.02, 0.02, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,  # Dias 51-60
-            0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,  # Dias 61-70
-            0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,  # Dias 71-80
-            0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,  # Dias 81-90
-        ])
-    
-    # Normalizar o perfil
-    PERFIL_CH4_THERMO /= PERFIL_CH4_THERMO.sum()
-    
-    # Fator de conversão C para CH4
-    fator_C_para_CH4 = 16/12
-    
-    # Emissão total por lote (por dia de entrada)
-    ch4_por_lote_kg = massa_kg_dia * TOC_YANG * CH4_C_FRAC_THERMO * fator_C_para_CH4
-    
-    # Kernel para compostagem
-    kernel_compost = PERFIL_CH4_THERMO * ch4_por_lote_kg
-    
-    # Entradas diárias CONSTANTES
-    entradas_diarias = np.ones(dias_simulacao, dtype=float)
-    
-    # Convolução para distribuir emissões ACUMULADAS
-    emissoes_CH4 = fftconvolve(entradas_diarias, kernel_compost, mode='full')[:dias_simulacao]
-    
-    return emissoes_CH4  # kg CH4 per day
-
-def calcular_emissoes_vermicompostagem_entrada_continua(massa_kg_dia, dias_simulacao=DIAS_PROJECAO, tipo_residuo='organico'):
-    """
-    Calcula emissões de CH4 da vermicompostagem com entrada contínua
-    Adaptado do script original tco2e
-    """
-    # Selecionar parâmetros conforme o tipo de resíduo
-    if tipo_residuo == 'organico':
-        TOC_YANG = TOC_YANG_ORGANICO
-        CH4_C_FRAC_YANG = CH4_C_FRAC_YANG_ORGANICO
-        DIAS_COMPOSTAGEM = DIAS_COMPOSTAGEM_ORGANICO
-    else:  # podas (não aplicável, mas mantida para consistência)
-        TOC_YANG = TOC_YANG_PODAS
-        CH4_C_FRAC_YANG = CH4_C_FRAC_YANG_PODAS
-        DIAS_COMPOSTAGEM = DIAS_COMPOSTAGEM_PODAS
-    
-    # Perfil temporal baseado no tipo de resíduo
-    if tipo_residuo == 'organico':
-        PERFIL_CH4_VERMI = np.array([
-            0.02, 0.02, 0.02, 0.03, 0.03,  # Dias 1-5
-            0.04, 0.04, 0.05, 0.05, 0.06,  # Dias 6-10
-            0.07, 0.08, 0.09, 0.10, 0.09,  # Dias 11-15
-            0.08, 0.07, 0.06, 0.05, 0.04,  # Dias 16-20
-            0.03, 0.02, 0.02, 0.01, 0.01,  # Dias 21-25
-            0.01, 0.01, 0.01, 0.01, 0.01,  # Dias 26-30
-            0.005, 0.005, 0.005, 0.005, 0.005,  # Dias 31-35
-            0.005, 0.005, 0.005, 0.005, 0.005,  # Dias 36-40
-            0.002, 0.002, 0.002, 0.002, 0.002,  # Dias 41-45
-            0.001, 0.001, 0.001, 0.001, 0.001   # Dias 46-50
-        ])
-    else:  # podas - perfil de 90 dias
-        PERFIL_CH4_VERMI = np.array([
-            0.01, 0.01, 0.02, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08,  # Dias 1-10
-            0.09, 0.10, 0.11, 0.12, 0.12, 0.12, 0.11, 0.10, 0.09, 0.08,  # Dias 11-20
-            0.07, 0.06, 0.05, 0.04, 0.03, 0.03, 0.03, 0.03, 0.03, 0.03,  # Dias 21-30
-            0.03, 0.03, 0.03, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02,  # Dias 31-40
-            0.02, 0.02, 0.02, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,  # Dias 41-50
-            0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,  # Dias 51-60
-            0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,  # Dias 61-70
-            0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,  # Dias 71-80
-            0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,  # Dias 81-90
-        ])
-    
-    # Normalizar o perfil
-    PERFIL_CH4_VERMI /= PERFIL_CH4_VERMI.sum()
-    
-    # Fator de conversão C para CH4
-    fator_C_para_CH4 = 16/12
-    
-    # Emissão total per lote (per day of entry)
-    ch4_por_lote_kg = massa_kg_dia * TOC_YANG * CH4_C_FRAC_YANG * fator_C_para_CH4
-    
-    # Kernel para vermicompostagem
-    kernel_vermi = PERFIL_CH4_VERMI * ch4_por_lote_kg
-    
-    # Entradas diárias CONSTANTES
-    entradas_diarias = np.ones(dias_simulacao, dtype=float)
-    
-    # Convolução para distribuir emissões ACUMULADAS
-    emissoes_CH4 = fftconvolve(entradas_diarias, kernel_vermi, mode='full')[:dias_simulacao]
-    
-    return emissoes_CH4  # kg CH4 per day
-
-def calcular_emissoes_totais_entrada_continua(massa_t_ano, mcf, tipo_residuo='organico'):
-    """
-    Calcula emissões totais ao longo de 20 anos considerando ENTRADA CONTÍNUA ANUAL
-    (mesma massa de 2023 a cada ano) e decaimento acumulado - APENAS CH4
-    """
-    if massa_t_ano <= 0 or mcf <= 0:
-        return {
-            'co2eq_aterro_total': 0,
-            'co2eq_evitado_compostagem': 0,
-            'co2eq_evitado_vermicompostagem': 0,
-            'co2eq_evitado_medio_anual_compostagem': 0,
-            'co2eq_evitado_medio_anual_vermicompostagem': 0,
-            'ch4_aterro_total': 0,
-            'massa_anual_considerada': 0,
-            'massa_total_20_anos': 0
-        }
-    
-    # Converter massa anual para diária (kg/dia)
-    # Supondo que a massa anual de 2023 se repete todos os anos
-    massa_kg_dia = (massa_t_ano * 1000) / 365
-    
-    # Calcular emissões diárias com entrada contínua (APENAS CH4)
-    emissoes_ch4_aterro_dia = calcular_emissoes_aterro_entrada_continua(massa_kg_dia, mcf, DIAS_PROJECAO, tipo_residuo)
-    
-    # Calcular emissões de tratamento biológico com entrada contínua (APENAS CH4)
-    emissoes_ch4_compostagem_dia = calcular_emissoes_compostagem_entrada_continua(massa_kg_dia, DIAS_PROJECAO, tipo_residuo)
-    emissoes_ch4_vermicompostagem_dia = calcular_emissoes_vermicompostagem_entrada_continua(massa_kg_dia, DIAS_PROJECAO, tipo_residuo)
-    
-    # Somar emissões diárias para obter totais
-    total_ch4_aterro_kg = emissoes_ch4_aterro_dia.sum()
-    total_ch4_compostagem_kg = emissoes_ch4_compostagem_dia.sum()
-    total_ch4_vermicompostagem_kg = emissoes_ch4_vermicompostagem_dia.sum()
-    
-    # Converter para toneladas
-    total_ch4_aterro_t = total_ch4_aterro_kg / 1000
-    total_ch4_compostagem_t = total_ch4_compostagem_kg / 1000
-    total_ch4_vermicompostagem_t = total_ch4_vermicompostagem_kg / 1000
-    
-    # Calcular CO₂ equivalente (usando GWP de 20 anos do script original) - APENAS CH4
-    co2eq_aterro = total_ch4_aterro_t * GWP_CH4_20
-    co2eq_compostagem = total_ch4_compostagem_t * GWP_CH4_20
-    co2eq_vermicompostagem = total_ch4_vermicompostagem_t * GWP_CH4_20
-    
-    # Emissões evitadas (diferença)
-    co2eq_evitado_compostagem = co2eq_aterro - co2eq_compostagem
-    co2eq_evitado_vermicompostagem = co2eq_aterro - co2eq_vermicompostagem
-    
-    return {
-        'co2eq_aterro_total': co2eq_aterro,
-        'co2eq_evitado_compostagem': co2eq_evitado_compostagem,
-        'co2eq_evitado_vermicompostagem': co2eq_evitado_vermicompostagem,
-        'co2eq_evitado_medio_anual_compostagem': co2eq_evitado_compostagem / ANOS_PROJECAO_CREDITOS,
-        'co2eq_evitado_medio_anual_vermicompostagem': co2eq_evitado_vermicompostagem / ANOS_PROJECAO_CREDITOS,
-        'ch4_aterro_total': total_ch4_aterro_t,  # CH4 total em toneladas (20 anos)
-        'massa_anual_considerada': massa_t_ano,
-        'massa_total_20_anos': massa_t_ano * ANOS_PROJECAO_CREDITOS
-    }
-
-def calcular_emissoes_diarias_detalhadas(massa_t_ano, mcf, tipo_residuo='organico'):
-    """
-    Calcula emissões diárias detalhadas para criar gráficos
-    Retorna DataFrame com datas e emissões diárias em tCO₂eq - APENAS CH4
-    """
-    # Converter massa anual para diária (kg/dia)
-    massa_kg_dia = (massa_t_ano * 1000) / 365
-    
-    # Calcular emissões diárias com entrada contínua (APENAS CH4)
-    emissoes_ch4_aterro_dia = calcular_emissoes_aterro_entrada_continua(massa_kg_dia, mcf, DIAS_PROJECAO, tipo_residuo)
-    
-    # Calcular emissões de tratamento biológico com entrada contínua (APENAS CH4)
-    emissoes_ch4_compostagem_dia = calcular_emissoes_compostagem_entrada_continua(massa_kg_dia, DIAS_PROJECAO, tipo_residuo)
-    emissoes_ch4_vermicompostagem_dia = calcular_emissoes_vermicompostagem_entrada_continua(massa_kg_dia, DIAS_PROJECAO, tipo_residuo)
-    
-    # Converter para tCO₂eq diário - APENAS CH4
-    emissoes_aterro_tco2eq_dia = (emissoes_ch4_aterro_dia * GWP_CH4_20) / 1000
-    emissoes_compostagem_tco2eq_dia = (emissoes_ch4_compostagem_dia * GWP_CH4_20) / 1000
-    emissoes_vermicompostagem_tco2eq_dia = (emissoes_ch4_vermicompostagem_dia * GWP_CH4_20) / 1000
-    
-    # Criar datas para 20 anos
-    data_inicio = datetime(2024, 1, 1)
-    datas = [data_inicio + timedelta(days=i) for i in range(DIAS_PROJECAO)]
-    
-    # Criar DataFrame
-    df = pd.DataFrame({
-        'Data': datas,
-        'Emissoes_Aterro_tCO2eq_dia': emissoes_aterro_tco2eq_dia,
-        'Emissoes_Compostagem_tCO2eq_dia': emissoes_compostagem_tco2eq_dia,
-        'Emissoes_Vermicompostagem_tCO2eq_dia': emissoes_vermicompostagem_tco2eq_dia
-    })
-    
-    # Calcular acumuladas
-    df['Total_Aterro_tCO2eq_acum'] = df['Emissoes_Aterro_tCO2eq_dia'].cumsum()
-    df['Total_Compostagem_tCO2eq_acum'] = df['Emissoes_Compostagem_tCO2eq_dia'].cumsum()
-    df['Total_Vermicompostagem_tCO2eq_acum'] = df['Emissoes_Vermicompostagem_tCO2eq_dia'].cumsum()
-    
-    # Calcular emissões evitadas acumuladas
-    df['Reducao_Compostagem_tCO2eq_acum'] = df['Total_Aterro_tCO2eq_acum'] - df['Total_Compostagem_tCO2eq_acum']
-    df['Reducao_Vermicompostagem_tCO2eq_acum'] = df['Total_Aterro_tCO2eq_acum'] - df['Total_Vermicompostagem_tCO2eq_acum']
-    
-    return df
-
-# =========================================================
-# Função para determinar MCF baseado no tipo de destino
-# =========================================================
-def determinar_mcf_por_destino(destino, tipo_residuo='organico'):
-    """
-    Determina o Methane Correction Factor (MCF) baseado no tipo de destino.
-    Baseado no IPCC 2006 e realidade brasileira.
-    """
-    if pd.isna(destino):
-        return 0.0
-    
-    destino_norm = normalizar_texto(destino)
-    
-    # Mapeamento de destinos para MCF
-    if "ATERRO SANITARIO" in destino_norm:
-        # Verificar se é realmente gerenciado
-        if "GERENCIADO" in destino_norm or "COLETA GAS" in destino_norm or "COLETA DE GAS" in destino_norm:
-            mcf_base = 1.0  # Aterro sanitário gerenciado com coleta de gás
-        else:
-            mcf_base = 0.8  # Aterro sanitário não gerenciado (mais comum no Brasil)
-    
-    elif "ATERRO CONTROLADO" in destino_norm:
-        mcf_base = 0.4  # Aterro controlado
-    
-    elif "LIXAO" in destino_norm or "VAZADOURO" in destino_norm or "DESCARGA DIRETA" in destino_norm:
-        mcf_base = 0.4  # Lixão (open dump)
-    
-    elif "COMPOSTAGEM" in destino_norm or "VERMICOMPOSTAGEM" in destino_norm:
-        mcf_base = 0.0  # Não aplicável - tratamento biológico
-    
-    elif "RECICLAGEM" in destino_norm or "TRIAGEM" in destino_norm:
-        mcf_base = 0.0  # Não aplicável - reciclagem
-    
-    elif "INCINERACAO" in destino_norm or "QUEIMA" in destino_norm:
-        mcf_base = 0.0  # Não aplicável - incineração
-    
-    elif "OUTRO" in destino_norm or "NAO INFORMADO" in destino_norm or "NAO SE APLICA" in destino_norm:
-        mcf_base = 0.0  # Não aplicável
-    
-    else:
-        # Para destinos não classificados, assumir como não aterro
-        mcf_base = 0.0
-    
-    # Ajustar MCF para podas e galhadas (materiais lignocelulósicos geram menos metano)
-    if tipo_residuo == 'podas' and mcf_base > 0:
-        return mcf_base * 0.5  # Reduzir pela metade para materiais lenhosos
-    else:
-        return mcf_base
-
-# =========================================================
-# Carga do Excel
-# =========================================================
-@st.cache_data
-def load_data(ano):
-    url = URLS_POR_ANO[ano]
-    df = pd.read_excel(
-        url,
-        sheet_name="Manejo_Coleta_e_Destinação",
-        header=13
+    st.sidebar.metric(
+        label="Preço do Carbono (tCO₂eq)",
+        value=f"{st.session_state.moeda_carbono} {formatar_br(st.session_state.preco_carbono)}",
+        help=f"Fonte: {st.session_state.fonte_cotacao}"
     )
-    df = df.dropna(how="all")
-    df.columns = [str(col).strip() for col in df.columns]
-    return df
+    st.sidebar.metric(
+        label="Euro (EUR/BRL)",
+        value=f"{st.session_state.moeda_real} {formatar_br(st.session_state.taxa_cambio)}",
+        help="Cotação do Euro em Reais Brasileiros"
+    )
+    preco_carbono_reais = st.session_state.preco_carbono * st.session_state.taxa_cambio
+    st.sidebar.metric(
+        label="Carbono em Reais (tCO₂eq)",
+        value=f"R$ {formatar_br(preco_carbono_reais)}",
+        help="Preço do carbono convertido para Reais Brasileiros"
+    )
+    with st.sidebar.expander("ℹ️ Informações do Mercado de Carbono"):
+        st.markdown(f"""
+        **📊 Cotações Atuais:**
+        - **Fonte do Carbono:** {st.session_state.fonte_cotacao}
+        - **Preço Atual:** {st.session_state.moeda_carbono} {formatar_br(st.session_state.preco_carbono)}/tCO₂eq
+        - **Câmbio EUR/BRL:** 1 Euro = R$ {formatar_br(st.session_state.taxa_cambio)}
+        - **Carbono em Reais:** R$ {formatar_br(preco_carbono_reais)}/tCO₂eq
 
-df = load_data(ano_selecionado)
+        **🌍 Mercado de Referência:**
+        - European Union Allowances (EUA)
+        - European Emissions Trading System (EU ETS)
+        - Contratos futuros de carbono (ICE CO2.L)
+        - Preços em tempo real via Yahoo Finance
 
-# =========================================================
-# Definição de colunas
-# =========================================================
-df = df.rename(columns={
-    df.columns[2]: "MUNICÍPIO",
-    df.columns[17]: "TIPO_COLETA_EXECUTADA",
-    df.columns[24]: "MASSA_COLETADA"
-})
+        **🔄 Atualização:**
+        - As cotações são carregadas automaticamente ao abrir o aplicativo
+        - Clique em **"Atualizar Cotações"** para obter valores mais recentes
+        - Em caso de falha, são utilizados valores de referência.
+        """)
 
-COL_MUNICIPIO = "MUNICÍPIO"
-COL_TIPO_COLETA = "TIPO_COLETA_EXECUTADA"
-COL_MASSA = "MASSA_COLETADA"
-COL_DESTINO = df.columns[28]  # Coluna AC
+def inicializar_session_state():
+    """Inicializa as variáveis de estado do Streamlit."""
+    if 'preco_carbono' not in st.session_state:
+        preco_carbono, moeda, _, _, fonte = obter_cotacao_carbono()
+        st.session_state.preco_carbono = preco_carbono
+        st.session_state.moeda_carbono = moeda
+        st.session_state.fonte_cotacao = fonte
+    if 'taxa_cambio' not in st.session_state:
+        preco_euro, moeda_real, _, _ = obter_cotacao_euro_real()
+        st.session_state.taxa_cambio = preco_euro
+        st.session_state.moeda_real = moeda_real
+    if 'moeda_real' not in st.session_state:
+        st.session_state.moeda_real = "R$"
+    if 'cotacao_atualizada' not in st.session_state:
+        st.session_state.cotacao_atualizada = False
+    if 'run_simulation' not in st.session_state:
+        st.session_state.run_simulation = False
+    if 'mostrar_atualizacao' not in st.session_state:
+        st.session_state.mostrar_atualizacao = False
+    if 'cotacao_carregada' not in st.session_state:
+        st.session_state.cotacao_carregada = False
+    if 'k_ano' not in st.session_state:
+        st.session_state.k_ano = 0.06
+    # [IA] estados para modelos
+    if 'modelo_vermi' not in st.session_state:
+        st.session_state.modelo_vermi = None
+        st.session_state.modelo_compost = None
+        st.session_state.scaler_ia = None
 
-# =========================================================
-# Classificação técnica
-# =========================================================
-def classificar_coleta(texto):
-    if pd.isna(texto):
-        return ("Não informado", False, False, "Tipo não informado")
+inicializar_session_state()
 
-    t = str(texto).lower()
-    palavras = {
-        "poda": ("Orgânico direto", True, True, "Resíduo vegetal limpo"),
-        "galhada": ("Orgânico direto", True, True, "Resíduo vegetal limpo"),
-        "verde": ("Orgânico direto", True, True, "Resíduo vegetal limpo"),
-        "orgânica": ("Orgânico direto", True, True, "Orgânico segregado"),
-        "domiciliar": ("Orgânico potencial", True, False, "Exige triagem"),
-        "varrição": ("Inapto", False, False, "Alta contaminação"),
-        "seletiva": ("Não orgânico", False, False, "Recicláveis")
-    }
-    for p, c in palavras.items():
-        if p in t:
-            return c
-    return ("Indefinido", False, False, "Não classificado")
+# =============================================================================
+# INTERFACE PRINCIPAL E PARÂMETROS DE ENTRADA
+# =============================================================================
 
-# =========================================================
-# Limpeza
-# =========================================================
-df_clean = df.dropna(subset=[COL_MUNICIPIO])
-df_clean[COL_MUNICIPIO] = df_clean[COL_MUNICIPIO].astype(str).str.strip()
+st.title("Simulador de Emissões de tCO₂eq e Cálculo de Créditos de Carbono com Análise de Sensibilidade Global")
+st.markdown("Esta ferramenta projeta os Créditos de Carbono ao calcular as emissões de gases de efeito estufa para dois contextos de gestão de resíduos")
 
-# =========================================================
-# Interface
-# =========================================================
-municipios = ["BRASIL – Todos os municípios"] + sorted(df_clean[COL_MUNICIPIO].unique())
-municipio = st.selectbox("Selecione o município:", municipios)
+exibir_cotacao_carbono()
 
-df_mun = df_clean.copy() if municipio == municipios[0] else df_clean[df_clean[COL_MUNICIPIO] == municipio]
-st.subheader(f"🇧🇷 Brasil — Síntese Nacional de RSU ({ano_selecionado})" if municipio == municipios[0] else f"📍 {municipio} - Ano {ano_selecionado}")
+with st.sidebar:
+    st.header("⚙️ Parâmetros de Entrada")
+    residuos_kg_dia = st.slider("Quantidade de resíduos (kg/dia)", min_value=10, max_value=1000, value=100, step=10)
 
-# =========================================================
-# Tabela principal
-# =========================================================
-resultados = []
-total_massa = massa_compostagem = massa_vermi = 0
+    st.subheader("📊 Parâmetros da Análise Sobol")
+    st.info("Estes são os parâmetros variados na análise de sensibilidade Sobol")
 
-for _, row in df_mun.iterrows():
-    categoria, comp, vermi, just = classificar_coleta(row[COL_TIPO_COLETA])
-    massa = pd.to_numeric(row[COL_MASSA], errors="coerce") or 0
-    total_massa += massa
-    if comp:
-        massa_compostagem += massa
-    if vermi:
-        massa_vermi += massa
+    st.markdown("**1. Taxa de Decaimento do Aterro**")
+    opcao_k = st.selectbox(
+        "Selecione a taxa de decaimento (k)",
+        options=[
+            "k = 0.06 ano⁻¹ (decaimento lento - valor padrão)",
+            "k = 0.40 ano⁻¹ (decaimento rápido)"
+        ],
+        index=0
+    )
+    k_ano = 0.40 if "0.40" in opcao_k else 0.06
+    st.session_state.k_ano = k_ano
+    st.write(f"**Valor selecionado:** {formatar_br(k_ano)} ano⁻¹")
 
-    resultados.append({
-        "Tipo de coleta": row[COL_TIPO_COLETA],
-        "Massa": formatar_massa_br(massa),
-        "Categoria": categoria,
-        "Compostagem": "✅" if comp else "❌",
-        "Vermicompostagem": "✅" if vermi else "❌",
-        "Justificativa": just
-    })
+    st.markdown("**2. Temperatura Média**")
+    T = st.slider("Temperatura média (°C)", min_value=20, max_value=40, value=25, step=1)
+    st.write(f"**Valor selecionado:** {formatar_br(T)} °C")
 
-st.dataframe(pd.DataFrame(resultados), use_container_width=True)
+    st.markdown("**3. Carbono Orgânico Degradável**")
+    DOC = st.slider("DOC (fração)", min_value=0.10, max_value=0.25, value=0.15, step=0.01)
+    st.write(f"**Valor selecionado:** {formatar_br(DOC)}")
 
-# ============================================================
-# ♻️ DESTINAÇÃO DA COLETA SELETIVA DE RESÍDUOS ORGÂNICOS
-# ============================================================
-st.markdown("---")
-st.subheader("♻️ Destinação da Coleta Seletiva de Resíduos Orgânicos")
+    st.markdown("**4. Umidade do Resíduo**")
+    umidade_valor = st.slider("Umidade do resíduo (%)", 50, 95, 85, 1,
+                              help="Valor fixo (não varia na análise Sobol)")
+    umidade = umidade_valor / 100.0
+    st.write(f"**Valor fixo:** {formatar_br(umidade_valor)}%")
 
-# Filtrar apenas os registros de coleta seletiva de orgânicos
-df_organicos = df_mun[df_mun[COL_TIPO_COLETA].astype(str).str.contains(
-    "seletiva.*orgânico|orgânico.*seletiva", 
-    case=False, 
-    na=False, 
-    regex=True
-)].copy()
+    with st.expander("ℹ️ Sobre os parâmetros da análise Sobol"):
+        st.markdown("""
+        **📊 Parâmetros variados na análise de sensibilidade Sobol:**
+        1. **Taxa de decaimento (k):** 0.06 a 0.40 ano⁻¹
+        2. **Temperatura (T):** 20 a 40°C
+        3. **Carbono orgânico degradável (DOC):** 0.10 a 0.25
 
-if not df_organicos.empty:
-    # Calcular massa total de orgânicos coletados seletivamente
-    df_organicos["MASSA_FLOAT"] = pd.to_numeric(df_organicos[COL_MASSA], errors="coerce").fillna(0)
-    total_organicos = df_organicos["MASSA_FLOAT"].sum()
-    
-    st.metric("Massa total de orgânicos coletados seletivamente", f"{formatar_numero_br(total_organicos)} t")
-    
-    # Agrupar por destino
-    df_organicos_destino = df_organicos.groupby(COL_DESTINO)["MASSA_FLOAT"].sum().reset_index()
-    df_organicos_destino["Percentual (%)"] = df_organicos_destino["MASSA_FLOAT"] / total_organicos * 100
-    df_organicos_destino = df_organicos_destino.sort_values("Percentual (%)", ascending=False)
-    
-    # Formatar para exibição
-    df_view_organicos = df_organicos_destino.copy()
-    df_view_organicos["Massa (t)"] = df_view_organicos["MASSA_FLOAT"].apply(formatar_numero_br)
-    df_view_organicos["Percentual (%)"] = df_view_organicos["Percentual (%)"].apply(lambda x: formatar_numero_br(x, 1))
-    
-    st.dataframe(df_view_organicos[[COL_DESTINO, "Massa (t)", "Percentual (%)"]], use_container_width=True)
-    
-    # =========================================================
-    # 🔥 Cálculo detalhado de emissões por tipo de destino (orgânicos)
-    # =========================================================
-    st.subheader("🔥 Cálculo Detalhado de Emissões de CH₄ por Tipo de Destino (Orgânicos)")
-    
-    # Adicionar coluna de MCF à tabela
-    df_organicos_destino["MCF"] = df_organicos_destino[COL_DESTINO].apply(lambda x: determinar_mcf_por_destino(x, 'organico'))
-    
-    # Lista para armazenar resultados detalhados
-    resultados_emissoes_organicos = []
-    ch4_total_aterro_20anos_organicos = 0  # AGORA COM DECAIMENTO
-    massa_total_aterro_t_organicos = 0
-    
-    for _, row in df_organicos_destino.iterrows():
-        destino = row[COL_DESTINO]
-        massa_t_ano = row["MASSA_FLOAT"]  # Massa ANUAL do ano selecionado
-        mcf = row["MCF"]
-        
-        # Só calcular emissões para destinos com MCF > 0 (aterros)
-        if mcf > 0 and massa_t_ano > 0:
-            # CÁLCULO COM DECAIMENTO (20 anos com entrada contínua) - MESMO MÉTODO DO SCRIPT TCO2E
-            ch4_20anos = calcular_ch4_total_aterro_20anos(massa_t_ano, mcf, 'organico')
-            
-            ch4_total_aterro_20anos_organicos += ch4_20anos
-            massa_total_aterro_t_organicos += massa_t_ano
-            
-            resultados_emissoes_organicos.append({
-                "Destino": destino,
-                "Massa anual (t)": formatar_numero_br(massa_t_ano),
-                "MCF": formatar_numero_br(mcf, 2),
-                "CH₄ Gerado (t) - 20 anos": formatar_numero_br(ch4_20anos, 3),
-                "Tipo de Aterro": classificar_tipo_aterro(mcf)
+        **⚙️ Parâmetro fixo (não varia):** Umidade (85%)
+        """)
+
+    st.subheader("🎯 Configuração de Simulação")
+    anos_simulacao = st.slider("Anos de simulação", 5, 50, 20, 5)
+    n_simulations = st.slider("Número de simulações Monte Carlo", 50, 1000, 100, 50)
+    n_samples = st.slider("Número de amostras Sobol", 32, 256, 64, 16)
+
+    # [IA] Controles da rede neural
+    st.subheader("🤖 Modo IA (Previsão Rápida)")
+    usar_ia = st.checkbox("Usar previsão por Rede Neural (em vez da simulação completa)", value=False)
+    if usar_ia and (st.session_state.modelo_vermi is None or st.session_state.modelo_compost is None):
+        with st.spinner("Carregando/treinando modelos de IA..."):
+            modelo_v, modelo_c, scaler = treinar_modelos_ia()
+            st.session_state.modelo_vermi = modelo_v
+            st.session_state.modelo_compost = modelo_c
+            st.session_state.scaler_ia = scaler
+    if usar_ia:
+        if st.button("🔄 Retreinar modelos IA"):
+            with st.spinner("Retreinando..."):
+                modelo_v, modelo_c, scaler = treinar_modelos_ia(force_retrain=True)
+                st.session_state.modelo_vermi = modelo_v
+                st.session_state.modelo_compost = modelo_c
+                st.session_state.scaler_ia = scaler
+                st.success("Modelos retreinados com sucesso!")
+
+    # Botão que aciona a simulação
+    if st.button("🚀 Executar Simulação", type="primary"):
+        st.session_state.run_simulation = True
+
+# =============================================================================
+# FUNÇÕES AUXILIARES PARA SIMULAÇÃO (GWP, SOBOL, MONTE CARLO)
+# =============================================================================
+
+def compute_results_for_gwp(gwp_ch4, gwp_n2o, waste_kg_day, k_year, temperature_C,
+                            doc_fraction, moisture_fraction, years, phi_baseline=0.85):
+    """Executa cálculo de emissões evitadas com valores específicos de GWP."""
+    calc = GHGEmissionCalculator()
+    calc.GWP_CH4_20 = gwp_ch4
+    calc.GWP_N2O_20 = gwp_n2o
+    return calc.calculate_avoided_emissions(
+        waste_kg_day, k_year, temperature_C, doc_fraction, moisture_fraction, years,
+        phi_baseline=phi_baseline
+    )
+
+def executar_simulacao_vermi_sobol(params_sobol, gwp_ch4, gwp_n2o):
+    """Função auxiliar para paralelização da análise Sobol – vermicompostagem."""
+    k_ano_sobol, T_sobol, DOC_sobol = params_sobol
+    np.random.seed(50)
+    calc = GHGEmissionCalculator()
+    calc.GWP_CH4_20 = gwp_ch4
+    calc.GWP_N2O_20 = gwp_n2o
+    res = calc.calculate_avoided_emissions(
+        waste_kg_day=residuos_kg_dia,
+        k_year=k_ano_sobol,
+        temperature_C=T_sobol,
+        doc_fraction=DOC_sobol,
+        moisture_fraction=umidade,
+        years=anos_simulacao,
+        phi_baseline=0.85
+    )
+    return res['vermicomposting']['avoided_co2eq_t']
+
+def executar_simulacao_compostagem_sobol(params_sobol, gwp_ch4, gwp_n2o):
+    """Função auxiliar para paralelização da análise Sobol – compostagem termofílica."""
+    k_ano_sobol, T_sobol, DOC_sobol = params_sobol
+    np.random.seed(50)
+    calc = GHGEmissionCalculator()
+    calc.GWP_CH4_20 = gwp_ch4
+    calc.GWP_N2O_20 = gwp_n2o
+    res = calc.calculate_avoided_emissions(
+        waste_kg_day=residuos_kg_dia,
+        k_year=k_ano_sobol,
+        temperature_C=T_sobol,
+        doc_fraction=DOC_sobol,
+        moisture_fraction=umidade,
+        years=anos_simulacao,
+        phi_baseline=0.85
+    )
+    return res['composting']['avoided_co2eq_t']
+
+def gerar_parametros_mc(n):
+    """Gera parâmetros aleatórios para simulação Monte Carlo."""
+    np.random.seed(50)
+    umidade_vals = np.random.uniform(0.75, 0.90, n)
+    temp_vals = np.random.normal(25, 3, n)
+    doc_vals = np.random.triangular(0.12, 0.15, 0.18, n)
+    return umidade_vals, temp_vals, doc_vals
+
+# =============================================================================
+# EXECUÇÃO DA SIMULAÇÃO (QUANDO BOTÃO FOR CLICADO)
+# =============================================================================
+
+if st.session_state.get('run_simulation', False):
+    with st.spinner('Executando simulação...'):
+        # Cenários de GWP
+        gwps = {
+            "Otimista (GWP-20)": (79.7, 273),
+            "Realista (GWP-100)": (27.0, 273),
+            "Pessimista (GWP-500)": (7.2, 130)
+        }
+
+        # ========== [IA] Verifica se usa IA para resultados principais ==========
+        if usar_ia and st.session_state.modelo_vermi is not None and st.session_state.modelo_compost is not None:
+            # Previsão rápida para o cenário Otimista (GWP-20)
+            X_input = np.array([[k_ano, T, DOC, umidade]])
+            X_scaled = st.session_state.scaler_ia.transform(X_input)
+            total_evitado_vermi = st.session_state.modelo_vermi.predict(X_scaled)[0]
+            total_evitado_compost = st.session_state.modelo_compost.predict(X_scaled)[0]
+
+            # Construímos um dicionário results_all simulado apenas para manter compatibilidade
+            results_all = {}
+            for nome, (gwp_ch4, gwp_n2o) in gwps.items():
+                if nome == "Otimista (GWP-20)":
+                    # Usa valores previstos
+                    results_all[nome] = {
+                        'vermicomposting': {'avoided_co2eq_t': total_evitado_vermi},
+                        'composting': {'avoided_co2eq_t': total_evitado_compost}
+                    }
+                else:
+                    # Para outros GWP, usamos simulação completa (ou poderíamos ter modelos separados)
+                    # Aqui apenas para manter a tabela comparativa, usamos uma estimativa proporcional
+                    factor = (gwp_ch4 + gwp_n2o) / (79.7 + 273)  # simplificação grosseira
+                    results_all[nome] = {
+                        'vermicomposting': {'avoided_co2eq_t': total_evitado_vermi * factor},
+                        'composting': {'avoided_co2eq_t': total_evitado_compost * factor}
+                    }
+            results = results_all["Otimista (GWP-20)"]
+
+            st.info("🤖 **Modo IA ativo:** Os valores de emissões evitadas foram previstos por rede neural treinada com base no simulador físico. A análise Sobol e Monte Carlo ainda utilizam simulação real para manter a precisão científica.")
+        else:
+            # Simulação completa determinística para cada GWP
+            results_all = {}
+            for nome, (gwp_ch4, gwp_n2o) in gwps.items():
+                results_all[nome] = compute_results_for_gwp(
+                    gwp_ch4, gwp_n2o, residuos_kg_dia, k_ano, T, DOC, umidade, anos_simulacao
+                )
+            results = results_all["Otimista (GWP-20)"]
+
+        # --- Geração de dados diários para gráficos (apenas GWP-20, sempre via simulação real para garantir qualidade) ---
+        dias = anos_simulacao * 365
+        datas = pd.date_range(start=datetime.now(), periods=dias, freq='D')
+
+        calc_g20 = GHGEmissionCalculator()
+        calc_g20.GWP_CH4_20, calc_g20.GWP_N2O_20 = gwps["Otimista (GWP-20)"]
+        ch4_aterro_dia, n2o_aterro_dia = calc_g20.calculate_landfill_emissions(
+            residuos_kg_dia, k_ano, T, DOC, umidade, anos_simulacao,
+            phi=0.85, capture_fraction=0.0
+        )
+        ch4_vermi_dia, n2o_vermi_dia = calc_g20.calculate_vermicomposting_emissions(
+            residuos_kg_dia, umidade, anos_simulacao
+        )
+
+        df = pd.DataFrame({
+            'Data': datas,
+            'CH4_Aterro_kg_dia': ch4_aterro_dia,
+            'N2O_Aterro_kg_dia': n2o_aterro_dia,
+            'CH4_Vermi_kg_dia': ch4_vermi_dia,
+            'N2O_Vermi_kg_dia': n2o_vermi_dia,
+        })
+
+        for gas in ['CH4_Aterro', 'N2O_Aterro', 'CH4_Vermi', 'N2O_Vermi']:
+            gwp = calc_g20.GWP_CH4_20 if 'CH4' in gas else calc_g20.GWP_N2O_20
+            df[f'{gas}_tCO2eq'] = df[f'{gas}_kg_dia'] * gwp / 1000
+
+        df['Total_Aterro_tCO2eq_dia'] = df['CH4_Aterro_tCO2eq'] + df['N2O_Aterro_tCO2eq']
+        df['Total_Vermi_tCO2eq_dia'] = df['CH4_Vermi_tCO2eq'] + df['N2O_Vermi_tCO2eq']
+        df['Total_Aterro_tCO2eq_acum'] = df['Total_Aterro_tCO2eq_dia'].cumsum()
+        df['Total_Vermi_tCO2eq_acum'] = df['Total_Vermi_tCO2eq_dia'].cumsum()
+        df['Reducao_tCO2eq_acum'] = df['Total_Aterro_tCO2eq_acum'] - df['Total_Vermi_tCO2eq_acum']
+        df['Year'] = df['Data'].dt.year
+
+        # Agregação anual – vermicompostagem
+        df_anual_revisado = df.groupby('Year').agg({
+            'Total_Aterro_tCO2eq_dia': 'sum',
+            'Total_Vermi_tCO2eq_dia': 'sum',
+        }).reset_index()
+        df_anual_revisado['Emission reductions (t CO₂eq)'] = df_anual_revisado['Total_Aterro_tCO2eq_dia'] - df_anual_revisado['Total_Vermi_tCO2eq_dia']
+        df_anual_revisado['Cumulative reduction (t CO₂eq)'] = df_anual_revisado['Emission reductions (t CO₂eq)'].cumsum()
+        df_anual_revisado.rename(columns={
+            'Total_Aterro_tCO2eq_dia': 'Baseline emissions (t CO₂eq)',
+            'Total_Vermi_tCO2eq_dia': 'Vermicomposting emissions (t CO₂eq)',
+        }, inplace=True)
+
+        # Dados para compostagem termofílica
+        ch4_compost_dia, n2o_compost_dia = calc_g20.calculate_thermophilic_emissions(
+            residuos_kg_dia, umidade, anos_simulacao
+        )
+        ch4_compost_tco2eq = ch4_compost_dia * calc_g20.GWP_CH4_20 / 1000
+        n2o_compost_tco2eq = n2o_compost_dia * calc_g20.GWP_N2O_20 / 1000
+        total_compost_tco2eq_dia = ch4_compost_tco2eq + n2o_compost_tco2eq
+        df_compost_dia = pd.DataFrame({'Data': datas, 'Total_Compost_tCO2eq_dia': total_compost_tco2eq_dia})
+        df_compost_dia['Year'] = df_compost_dia['Data'].dt.year
+        df_comp_anual_revisado = df_compost_dia.groupby('Year').agg({'Total_Compost_tCO2eq_dia': 'sum'}).reset_index()
+        df_comp_anual_revisado = pd.merge(df_comp_anual_revisado,
+                                          df_anual_revisado[['Year', 'Baseline emissions (t CO₂eq)']],
+                                          on='Year', how='left')
+        df_comp_anual_revisado['Emission reductions (t CO₂eq)'] = df_comp_anual_revisado['Baseline emissions (t CO₂eq)'] - df_comp_anual_revisado['Total_Compost_tCO2eq_dia']
+        df_comp_anual_revisado['Cumulative reduction (t CO₂eq)'] = df_comp_anual_revisado['Emission reductions (t CO₂eq)'].cumsum()
+        df_comp_anual_revisado.rename(columns={'Total_Compost_tCO2eq_dia': 'Composting emissions (t CO₂eq)'}, inplace=True)
+
+        # --- EXIBIÇÃO DE RESULTADOS ---
+        st.header("📈 Resultados da Simulação")
+        if usar_ia:
+            st.info("🤖 **Resultados principais gerados por Rede Neural** (validação no treinamento). As análises de sensibilidade e incerteza abaixo seguem o simulador físico original.")
+        else:
+            st.info(f"""
+            **Parâmetros utilizados na simulação:**
+            - Taxa de decaimento (k): {formatar_br(k_ano)} ano⁻¹
+            - Temperatura (T): {formatar_br(T)} °C
+            - DOC: {formatar_br(DOC)}
+            - Umidade: {formatar_br(umidade_valor)}%
+            - Resíduos/dia: {formatar_br(residuos_kg_dia)} kg
+            - Total de resíduos: {formatar_br(residuos_kg_dia * 365 * anos_simulacao / 1000)} toneladas
+            - Fator φ (baseline): 0,85 (UNFCCC 2024 - clima úmido)
+            """)
+
+        # Tabela comparativa de GWP
+        st.subheader("📊 Comparação entre Cenários de GWP")
+        comparacao = []
+        for nome, res in results_all.items():
+            comparacao.append({
+                "Cenário": nome,
+                "Emissões evitadas (tCO₂eq)": res['vermicomposting']['avoided_co2eq_t'],
+                "Média anual (tCO₂eq/ano)": res['vermicomposting']['avoided_co2eq_t'] / anos_simulacao
             })
-    
-    # Se houver emissões de aterro, mostrar resultados
-    if resultados_emissoes_organicos:
-        st.dataframe(pd.DataFrame(resultados_emissoes_organicos), use_container_width=True)
-        
-        # =========================================================
-        # 📊 Comparação com Cenário de Tratamento Biológico (orgânicos)
-        # =========================================================
-        st.subheader("📊 Comparação: Aterro vs Tratamento Biológico (Orgânicos)")
-        
-        # Calcular emissões do cenário de tratamento biológico (com entrada contínua)
-        massa_kg_total_aterro_organicos = massa_total_aterro_t_organicos * 1000
-        
-        # Para compostagem: usar mesmo método de entrada contínua
-        # Converter massa anual para diária
-        massa_kg_dia_organicos = massa_kg_total_aterro_organicos / 365
-        
-        # Calcular emissões de CH4 da compostagem (20 anos com entrada contínua)
-        emissoes_ch4_compostagem_dia = calcular_emissoes_compostagem_entrada_continua(massa_kg_dia_organicos, DIAS_PROJECAO, 'organico')
-        ch4_comp_total_t_20anos_organicos = emissoes_ch4_compostagem_dia.sum() / 1000
-        
-        # Calcular emissões de CH4 da vermicompostagem (20 anos com entrada contínua)
-        emissoes_ch4_vermicompostagem_dia = calcular_emissoes_vermicompostagem_entrada_continua(massa_kg_dia_organicos, DIAS_PROJECAO, 'organico')
-        ch4_vermi_total_t_20anos_organicos = emissoes_ch4_vermicompostagem_dia.sum() / 1000
-        
-        # Emissões evitadas (20 anos)
-        ch4_evitado_20anos_comp_organicos = ch4_total_aterro_20anos_organicos - ch4_comp_total_t_20anos_organicos
-        ch4_evitado_20anos_vermi_organicos = ch4_total_aterro_20anos_organicos - ch4_vermi_total_t_20anos_organicos
-        
-        # Calcular CO₂ equivalente (20 anos) usando GWP de 20 anos - APENAS CH4
-        co2eq_evitado_20anos_comp_organicos = ch4_evitado_20anos_comp_organicos * GWP_CH4_20
-        co2eq_evitado_20anos_vermi_organicos = ch4_evitado_20anos_vermi_organicos * GWP_CH4_20
-        
-        # Médias anuais
-        ch4_evitado_medio_anual_comp_organicos = ch4_evitado_20anos_comp_organicos / ANOS_PROJECAO_CREDITOS
-        co2eq_evitado_medio_anual_comp_organicos = co2eq_evitado_20anos_comp_organicos / ANOS_PROJECAO_CREDITOS
-        
-        # Métricas comparativas ATUALIZADAS (com decaimento)
-        col1, col2, col3, col4 = st.columns(4)
-        
+        df_comp_gwp = pd.DataFrame(comparacao)
+        st.dataframe(df_comp_gwp.style.format({
+            "Emissões evitadas (tCO₂eq)": lambda x: formatar_br(x),
+            "Média anual (tCO₂eq/ano)": lambda x: formatar_br(x)
+        }))
+
+        # Valores financeiros (cenário otimista)
+        total_evitado_vermi = results['vermicomposting']['avoided_co2eq_t']
+        total_evitado_compost = results['composting']['avoided_co2eq_t']
+        preco_carbono = st.session_state.preco_carbono
+        moeda = st.session_state.moeda_carbono
+        taxa_cambio = st.session_state.taxa_cambio
+        fonte_cotacao = st.session_state.fonte_cotacao
+
+        valor_vermi_eur = calcular_valor_creditos(total_evitado_vermi, preco_carbono, moeda)
+        valor_compost_eur = calcular_valor_creditos(total_evitado_compost, preco_carbono, moeda)
+        valor_vermi_brl = calcular_valor_creditos(total_evitado_vermi, preco_carbono, "R$", taxa_cambio)
+        valor_compost_brl = calcular_valor_creditos(total_evitado_compost, preco_carbono, "R$", taxa_cambio)
+
+        st.subheader("💰 Valor Financeiro das Emissões Evitadas (Cenário Otimista)")
+        col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric(
-                "Massa em aterros",
-                f"{formatar_numero_br(massa_total_aterro_t_organicos)} t",
-                help=f"Total de orgânicos destinados a aterros em {ano_selecionado} (base para projeção)"
-            )
-        
+            st.metric("Preço Carbono (Euro)", f"{moeda} {formatar_br(preco_carbono)}/tCO₂eq",
+                      help=f"Fonte: {fonte_cotacao}")
         with col2:
-            st.metric(
-                "CH₄ do aterro (20 anos)",
-                f"{formatar_numero_br(ch4_total_aterro_20anos_organicos, 1)} t",
-                delta=None,
-                help=f"CH₄ gerado em aterros em {ANOS_PROJECAO_CREDITOS} anos com decaimento (k={k_ano_ORGANICO} ano⁻¹)"
-            )
-        
+            st.metric("Vermicompostagem (Euro)", f"{moeda} {formatar_br(valor_vermi_eur)}",
+                      help=f"{formatar_br(total_evitado_vermi)} tCO₂eq evitadas")
         with col3:
-            st.metric(
-                "CH₄ evitado (Comp. 20 anos)",
-                f"{formatar_numero_br(ch4_evitado_20anos_comp_organicos, 1)} t",
-                delta=f"-{formatar_numero_br((ch4_evitado_20anos_comp_organicos/ch4_total_aterro_20anos_organicos)*100 if ch4_total_aterro_20anos_organicos > 0 else 0, 1)}%",
-                delta_color="inverse",
-                help=f"Redução de CH₄ em {ANOS_PROJECAO_CREDITOS} anos ao optar por compostagem"
-            )
-        
-        with col4:
-            st.metric(
-                "CO₂e evitado (Comp. 20 anos)",
-                f"{formatar_numero_br(co2eq_evitado_20anos_comp_organicos, 1)} t CO₂e",
-                help=f"Equivalente em CO₂ (GWP20 = {GWP_CH4_20})"
-            )
-        
-        # Nota explicativa sobre o método de cálculo
-        st.info(f"""
-        **🧮 Método de cálculo (igual ao script tco2e) - RESÍDUOS ORGÂNICOS:**
-        - **Tipo de resíduo:** Resíduos orgânicos (alimentares, jardim)
-        - **Período:** {ANOS_PROJECAO_CREDITOS} anos com entrada contínua
-        - **Constante de decaimento (k):** {k_ano_ORGANICO} ano⁻¹
-        - **Modelo:** Decomposição exponencial com convolução (IPCC 2006)
-        - **Entrada anual constante:** {formatar_numero_br(massa_total_aterro_t_organicos)} t/ano (dados de {ano_selecionado})
-        - **Massa total 20 anos:** {formatar_numero_br(massa_total_aterro_t_organicos * ANOS_PROJECAO_CREDITOS)} t
-        - **Método matemático:** `fftconvolve(entradas_diarias, kernel_exponencial)`
-        - **DOC:** {DOC_ORGANICO} (carbono orgânico degradável)
-        - **TOC:** {TOC_YANG_ORGANICO} (carbono orgânico total)
-        - **Fator de emissão CH₄ compostagem:** {CH4_C_FRAC_THERMO_ORGANICO}
-        - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
-        """)
-        
-        # =============================================================================
-        # 🎯 PROJEÇÃO PARA CRÉDITOS DE CARBONO (20 ANOS COM ENTRADA CONTÍNUA) - RESÍDUOS ORGÂNICOS
-        # =============================================================================
-        st.markdown("---")
-        st.subheader("🎯 Projeção para Créditos de Carbono - Resíduos Orgânicos (20 anos com entrada contínua)")
-        
-        st.info(f"""
-        **Metodologia avançada para resíduos orgânicos:** Este cálculo considera **entrada contínua de resíduos orgânicos** (mesma massa de {ano_selecionado} a cada ano)
-        e o **decaimento acumulado das emissões no aterro ao longo de {ANOS_PROJECAO_CREDITOS} anos**,
-        conforme modelo do IPCC 2006 e implementado no script original tco2e.
-        
-        - **Período:** {ANOS_PROJECAO_CREDITOS} anos (padrão para projetos de créditos de carbono)
-        - **Entrada anual:** {formatar_numero_br(massa_total_aterro_t_organicos)} t/ano (mantendo massa de {ano_selecionado})
-        - **Total massa em 20 anos:** {formatar_numero_br(massa_total_aterro_t_organicos * ANOS_PROJECAO_CREDITOS)} t
-        - **Constante de decaimento (k):** {k_ano_ORGANICO} ano⁻¹
-        - **GWP CH₄ (20 anos):** {GWP_CH4_20}
-        - **Considera decomposição gradual** dos resíduos de todos os anos
-        - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
-        """)
-        
-        # Calcular emissões COM ENTRADA CONTÍNUA para cada tipo de aterro (orgânicos)
-        resultados_entrada_continua_organicos = []
-        co2eq_total_aterro_20anos_organicos = 0
-        co2eq_total_evitado_compostagem_20anos_organicos = 0
-        co2eq_total_evitado_vermicompostagem_20anos_organicos = 0
-        
-        for _, row in df_organicos_destino.iterrows():
-            destino = row[COL_DESTINO]
-            massa_t_ano = row["MASSA_FLOAT"]  # Massa ANUAL do ano selecionado
-            mcf = row["MCF"]
-            
-            if mcf > 0 and massa_t_ano > 0:
-                # Calcular emissões com entrada contínua para 20 anos
-                resultados = calcular_emissoes_totais_entrada_continua(massa_t_ano, mcf, 'organico')
-                
-                co2eq_total_aterro_20anos_organicos += resultados['co2eq_aterro_total']
-                co2eq_total_evitado_compostagem_20anos_organicos += resultados['co2eq_evitado_compostagem']
-                co2eq_total_evitado_vermicompostagem_20anos_organicos += resultados['co2eq_evitado_vermicompostagem']
-                
-                resultados_entrada_continua_organicos.append({
-                    "Destino": destino,
-                    "Massa anual (t)": formatar_numero_br(massa_t_ano),
-                    "MCF": formatar_numero_br(mcf, 2),
-                    "Linha de Base (tCO₂e)": formatar_numero_br(resultados['co2eq_aterro_total'], 1),
-                    "Emissões Evitadas - Compostagem (tCO₂e)": formatar_numero_br(resultados['co2eq_evitado_compostagem'], 1),
-                    "Emissões Evitadas - Vermicompostagem (tCO₂e)": formatar_numero_br(resultados['co2eq_evitado_vermicompostagem'], 1),
-                    "Média anual evitada (tCO₂e/ano)": formatar_numero_br(resultados['co2eq_evitado_medio_anual_compostagem'], 1)
-                })
-        
-        if resultados_entrada_continua_organicos:
-            # Mostrar tabela de resultados com entrada contínua
-            st.dataframe(pd.DataFrame(resultados_entrada_continua_organicos), use_container_width=True)
-            
-            # Calcular médias anuais (dividindo por 20)
-            media_anual_evitado_compostagem_organicos = co2eq_total_evitado_compostagem_20anos_organicos / ANOS_PROJECAO_CREDITOS
-            media_anual_evitado_vermicompostagem_organicos = co2eq_total_evitado_vermicompostagem_20anos_organicos / ANOS_PROJECAO_CREDITOS
-            
-            # Resumo geral para orgânicos
-            st.markdown("#### 📊 Resumo Geral da Projeção - Resíduos Orgânicos (20 anos)")
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric(
-                    "Massa total 20 anos",
-                    f"{formatar_numero_br(massa_total_aterro_t_organicos * ANOS_PROJECAO_CREDITOS)} t",
-                    help=f"{formatar_numero_br(massa_total_aterro_t_organicos)} t/ano × {ANOS_PROJECAO_CREDITOS} anos"
-                )
-            
-            with col2:
-                st.metric(
-                    "Linha de Base total (tCO₂e)",
-                    f"{formatar_numero_br(co2eq_total_aterro_20anos_organicos, 1)} tCO₂e",
-                    help="Emissões acumuladas do aterro em 20 anos (APENAS CH₄)"
-                )
-            
-            with col3:
-                st.metric(
-                    "Emissões Evitadas - Compostagem (tCO₂e)",
-                    f"{formatar_numero_br(co2eq_total_evitado_compostagem_20anos_organicos, 1)} tCO₂e",
-                    help="Emissões evitadas com compostagem em 20 anos (APENAS CH₄)"
-                )
-            
-            # =============================================================================
-            # 📈 GRÁFICO: REDUÇÃO DE EMISSÕES ACUMULADA - RESÍDUOS ORGÂNICOS (IGUAL AO SCRIPT TCO2E)
-            # =============================================================================
-            st.markdown("---")
-            st.subheader("📉 Redução de Emissões Acumulada - Resíduos Orgânicos (20 anos)")
-            
-            # Calcular dados para o gráfico (somar todos os destinos)
-            # Inicializar arrays de emissões diárias
-            datas = []
-            total_aterro_diario_organicos = np.zeros(DIAS_PROJECAO)
-            total_compostagem_diario_organicos = np.zeros(DIAS_PROJECAO)
-            total_vermicompostagem_diario_organicos = np.zeros(DIAS_PROJECAO)
-            
-            # Data inicial para o gráfico
-            data_inicio = datetime(2024, 1, 1)
-            
-            # Para cada destino, calcular emissões diárias e somar
-            for _, row in df_organicos_destino.iterrows():
-                massa_t_ano = row["MASSA_FLOAT"]
-                mcf = row["MCF"]
-                
-                if mcf > 0 and massa_t_ano > 0:
-                    # Calcular emissões diárias detalhadas
-                    df_detalhado = calcular_emissoes_diarias_detalhadas(massa_t_ano, mcf, 'organico')
-                    
-                    # Somar às totais
-                    total_aterro_diario_organicos += df_detalhado['Emissoes_Aterro_tCO2eq_dia'].values
-                    total_compostagem_diario_organicos += df_detalhado['Emissoes_Compostagem_tCO2eq_dia'].values
-                    total_vermicompostagem_diario_organicos += df_detalhado['Emissoes_Vermicompostagem_tCO2eq_dia'].values
-            
-            # Criar DataFrame para o gráfico
-            df_grafico_organicos = pd.DataFrame({
-                'Data': [data_inicio + timedelta(days=i) for i in range(DIAS_PROJECAO)],
-                'Total_Aterro_tCO2eq_dia': total_aterro_diario_organicos,
-                'Total_Compostagem_tCO2eq_dia': total_compostagem_diario_organicos,
-                'Total_Vermicompostagem_tCO2eq_dia': total_vermicompostagem_diario_organicos
-            })
-            
-            # Calcular acumuladas
-            df_grafico_organicos['Total_Aterro_tCO2eq_acum'] = df_grafico_organicos['Total_Aterro_tCO2eq_dia'].cumsum()
-            df_grafico_organicos['Total_Compostagem_tCO2eq_acum'] = df_grafico_organicos['Total_Compostagem_tCO2eq_dia'].cumsum()
-            df_grafico_organicos['Total_Vermicompostagem_tCO2eq_acum'] = df_grafico_organicos['Total_Vermicompostagem_tCO2eq_dia'].cumsum()
-            
-            # Criar gráfico
-            fig, ax = plt.subplots(figsize=(12, 6))
-            
-            # Plotar linhas
-            ax.plot(df_grafico_organicos['Data'], df_grafico_organicos['Total_Aterro_tCO2eq_acum'], 
-                   'r-', label='Cenário Base (Aterro Sanitário)', linewidth=2)
-            ax.plot(df_grafico_organicos['Data'], df_grafico_organicos['Total_Compostagem_tCO2eq_acum'], 
-                   'g-', label='Projeto (Compostagem Termofílica)', linewidth=2)
-            ax.plot(df_grafico_organicos['Data'], df_grafico_organicos['Total_Vermicompostagem_tCO2eq_acum'], 
-                   'b-', label='Projeto (Vermicompostagem)', linewidth=2, linestyle='--')
-            
-            # Preencher área entre as linhas (emissões evitadas)
-            ax.fill_between(df_grafico_organicos['Data'], 
-                           df_grafico_organicos['Total_Compostagem_tCO2eq_acum'], 
-                           df_grafico_organicos['Total_Aterro_tCO2eq_acum'],
-                           color='lightgreen', alpha=0.3, label='Emissões Evitadas (Compostagem)')
-            
-            # Configurar eixos
-            ax.set_title(f'Redução de Emissões Acumulada - Resíduos Orgânicos em {ANOS_PROJECAO_CREDITOS} Anos', fontsize=14, fontweight='bold')
-            ax.set_xlabel('Ano', fontsize=12)
-            ax.set_ylabel('tCO₂e Acumulado', fontsize=12)
-            
-            # Formatar eixo X para mostrar apenas anos
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-            ax.xaxis.set_major_locator(mdates.YearLocator(2))  # Mostrar a cada 2 anos
-            plt.xticks(rotation=45)
-            
-            # Formatar eixo Y no padrão brasileiro
-            br_formatter = FuncFormatter(br_format)
-            ax.yaxis.set_major_formatter(br_formatter)
-            
-            # Adicionar grid e legenda
-            ax.grid(True, linestyle='--', alpha=0.7)
-            ax.legend(loc='upper left', fontsize=10)
-            
-            # Ajustar layout
-            plt.tight_layout()
-            
-            # Mostrar gráfico no Streamlit
-            st.pyplot(fig)
-            
-            # Adicionar informações abaixo do gráfico
-            st.markdown(f"""
-            **📊 Interpretação do Gráfico - Resíduos Orgânicos:**
-            - **Linha Vermelha:** Emissões acumuladas do cenário base (aterro sanitário) - **{formatar_numero_br(df_grafico_organicos['Total_Aterro_tCO2eq_acum'].iloc[-1], 1)} tCO₂e**
-            - **Linha Verde:** Emissões acumuladas do projeto (compostagem) - **{formatar_numero_br(df_grafico_organicos['Total_Compostagem_tCO2eq_acum'].iloc[-1], 1)} tCO₂e**
-            - **Linha Azul Tracejada:** Emissões acumuladas do projeto (vermicompostagem) - **{formatar_numero_br(df_grafico_organicos['Total_Vermicompostagem_tCO2eq_acum'].iloc[-1], 1)} tCO₂e**
-            - **Área Verde:** Emissões evitadas pela compostagem - **{formatar_numero_br(co2eq_total_evitado_compostagem_20anos_organicos, 1)} tCO₂e**
-            
-            **💡 Observações para resíduos orgânicos:**
-            1. Resíduos orgânicos coletados seletivamente têm **alto potencial** para compostagem/vermicompostagem
-            2. Já estão **segregados na fonte**, reduzindo custos de triagem
-            3. Podem ser tratados **localmente**, reduzindo custos de transporte
-            4. A **área entre as curvas** representa os créditos de carbono gerados
-            5. Curva do aterro mostra o **efeito do decaimento exponencial** (k = {k_ano_ORGANICO} ano⁻¹)
-            6. **⚠️ APENAS CH₄:** Este gráfico considera somente emissões de metano (CH₄)
-            """)
-            
-            # =============================================================================
-            # SEÇÃO DE COTAÇÃO AUTOMÁTICA DO CARBONO - RESÍDUOS ORGÂNICOS
-            # =============================================================================
-            st.markdown("---")
-            st.subheader("💰 Mercado de Carbono - Valor Financeiro das Emissões Evitadas (Resíduos Orgânicos)")
-            
-            # Obter cotações automaticamente
-            with st.spinner("🔄 Obtendo cotações em tempo real..."):
-                # Obter cotação do carbono
-                preco_carbono, moeda_carbono, contrato_info, sucesso_carbono, fonte_carbono = obter_cotacao_carbono()
-                
-                # Obter cotação do Euro
-                taxa_cambio, moeda_real, sucesso_euro, fonte_euro = obter_cotacao_euro_real()
-            
-            # Exibir cotações atuais
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric(
-                    label=f"Preço do Carbono (tCO₂eq)",
-                    value=f"{moeda_carbono} {formatar_br(preco_carbono)}",
-                    help=f"Fonte: {fonte_carbono}"
-                )
-            
-            with col2:
-                st.metric(
-                    label="Euro (EUR/BRL)",
-                    value=f"{moeda_real} {formatar_br(taxa_cambio)}",
-                    help=f"Fonte: {fonte_euro}"
-                )
-            
-            with col3:
-                preco_carbono_reais = preco_carbono * taxa_cambio
-                st.metric(
-                    label=f"Carbono em Reais (tCO₂eq)",
-                    value=f"R$ {formatar_br(preco_carbono_reais)}",
-                    help="Preço do carbono convertido para Reais Brasileiros"
-                )
-            
-            # =============================================================================
-            # VALOR FINANCEIRO DAS EMISSÕES EVITADAS - PROJEÇÃO 20 ANOS COM ENTRADA CONTÍNUA (ORGÂNICOS)
-            # =============================================================================
-            st.subheader("💵 Valor Financeiro do CO₂e Evitado - Resíduos Orgânicos (20 anos com entrada contínua)")
-            
-            # Calcular valores financeiros para 20 anos (TOTAL)
-            valor_total_euros_20anos_comp_organicos = calcular_valor_creditos(
-                co2eq_total_evitado_compostagem_20anos_organicos, preco_carbono, moeda_carbono
-            )
-            valor_total_reais_20anos_comp_organicos = calcular_valor_creditos(
-                co2eq_total_evitado_compostagem_20anos_organicos, preco_carbono, "R$", taxa_cambio
-            )
-            
-            valor_total_euros_20anos_vermi_organicos = calcular_valor_creditos(
-                co2eq_total_evitado_vermicompostagem_20anos_organicos, preco_carbono, moeda_carbono
-            )
-            valor_total_reais_20anos_vermi_organicos = calcular_valor_creditos(
-                co2eq_total_evitado_vermicompostagem_20anos_organicos, preco_carbono, "R$", taxa_cambio
-            )
-            
-            # Calcular médias anuais (dividir por 20)
-            valor_medio_anual_euros_comp_organicos = valor_total_euros_20anos_comp_organicos / ANOS_PROJECAO_CREDITOS
-            valor_medio_anual_reais_comp_organicos = valor_total_reais_20anos_comp_organicos / ANOS_PROJECAO_CREDITOS
-            
-            valor_medio_anual_euros_vermi_organicos = valor_total_euros_20anos_vermi_organicos / ANOS_PROJECAO_CREDITOS
-            valor_medio_anual_reais_vermi_organicos = valor_total_reais_20anos_vermi_organicos / ANOS_PROJECAO_CREDITOS
-            
-            # Exibir resultados da projeção - COMPOSTAGEM (ORGÂNICOS)
-            st.markdown("#### 🍂 Compostagem - Valor dos Créditos de Carbono (Resíduos Orgânicos)")
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric(
-                    "Emissões Evitadas (tCO₂e)",
-                    f"{formatar_br(co2eq_total_evitado_compostagem_20anos_organicos)} tCO₂e",
-                    help=f"Total em {ANOS_PROJECAO_CREDITOS} anos com entrada contínua (APENAS CH₄)"
-                )
-            
-            with col2:
-                st.metric(
-                    "Média anual (tCO₂e/ano)",
-                    f"{formatar_br(media_anual_evitado_compostagem_organicos)} tCO₂e/ano",
-                    help="Média anual (total ÷ 20) - APENAS CH₄"
-                )
-            
-            with col3:
-                st.metric(
-                    "Valor total (Euro)",
-                    f"{moeda_carbono} {formatar_br(valor_total_euros_20anos_comp_organicos)}",
-                    help=f"Valor acumulado em {ANOS_PROJECAO_CREDITOS} anos"
-                )
-            
-            with col4:
-                st.metric(
-                    "Valor médio anual (Euro)",
-                    f"{moeda_carbono} {formatar_br(valor_medio_anual_euros_comp_organicos)}/ano",
-                    help="Média anual (total ÷ 20)"
-                )
-            
-            # Linha 2: Compostagem em Reais (Orgânicos)
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.metric(
-                    "Valor total (R$)",
-                    f"R$ {formatar_br(valor_total_reais_20anos_comp_organicos)}",
-                    help=f"Valor acumulado em {ANOS_PROJECAO_CREDITOS} anos"
-                )
-            
-            with col2:
-                st.metric(
-                    "Valor médio anual (R$)",
-                    f"R$ {formatar_br(valor_medio_anual_reais_comp_organicos)}/ano",
-                    help="Média anual (total ÷ 20)"
-                )
-            
-            # Exibir resultados da projeção - VERMICOMPOSTAGEM (ORGÂNICOS)
-            st.markdown("#### 🐛 Vermicompostagem - Valor dos Créditos de Carbono (Resíduos Orgânicos)")
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric(
-                    "Emissões Evitadas (tCO₂e)",
-                    f"{formatar_br(co2eq_total_evitado_vermicompostagem_20anos_organicos)} tCO₂e",
-                    help=f"Total em {ANOS_PROJECAO_CREDITOS} anos com entrada contínua (APENAS CH₄)"
-                )
-            
-            with col2:
-                st.metric(
-                    "Média anual (tCO₂e/ano)",
-                    f"{formatar_br(media_anual_evitado_vermicompostagem_organicos)} tCO₂e/ano",
-                    help="Média anual (total ÷ 20) - APENAS CH₄"
-                )
-            
-            with col3:
-                st.metric(
-                    "Valor total (Euro)",
-                    f"{moeda_carbono} {formatar_br(valor_total_euros_20anos_vermi_organicos)}",
-                    help=f"Valor acumulado em {ANOS_PROJECAO_CREDITOS} anos"
-                )
-            
-            with col4:
-                st.metric(
-                    "Valor médio anual (Euro)",
-                    f"{moeda_carbono} {formatar_br(valor_medio_anual_euros_vermi_organicos)}/ano",
-                    help="Média anual (total ÷ 20)"
-                )
-            
-            # Linha 4: Vermicompostagem em Reais (Orgânicos)
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.metric(
-                    "Valor total (R$)",
-                    f"R$ {formatar_br(valor_total_reais_20anos_vermi_organicos)}",
-                    help=f"Valor acumulado em {ANOS_PROJECAO_CREDITOS} anos"
-                )
-            
-            with col2:
-                st.metric(
-                    "Valor médio anual (R$)",
-                    f"R$ {formatar_br(valor_medio_anual_reais_vermi_organicos)}/ano",
-                    help="Média anual (total ÷ 20)"
-                )
-            
-            # Explicação sobre como calcular o valor
-            with st.expander("🧮 Como é calculado o valor dos créditos de carbono para resíduos orgânicos?"):
-                st.markdown(f"""
-                **📊 Fórmula de Cálculo:**
-                ```
-                Valor dos Créditos = Emissões Evitadas × Preço do Carbono
-                ```
-                
-                **📈 Para Compostagem de Resíduos Orgânicos:**
-                - **Emissões Evitadas:** {formatar_br(co2eq_total_evitado_compostagem_20anos_organicos)} tCO₂e
-                - **Preço do Carbono:** {moeda_carbono} {formatar_br(preco_carbono)}/tCO₂eq
-                - **Cálculo:** {formatar_br(co2eq_total_evitado_compostagem_20anos_organicos)} × {formatar_br(preco_carbono)} = {moeda_carbono} {formatar_br(valor_total_euros_20anos_comp_organicos)}
-                
-                **💰 Em Reais (com câmbio):**
-                - **Taxa de câmbio:** 1 Euro = R$ {formatar_br(taxa_cambio)}
-                - **Preço em Reais:** R$ {formatar_br(preco_carbono_reais)}/tCO₂eq
-                - **Cálculo:** {formatar_br(co2eq_total_evitado_compostagem_20anos_organicos)} × {formatar_br(preco_carbono_reais)} = R$ {formatar_br(valor_total_reais_20anos_comp_organicos)}
-                
-                **📅 Média Anual (dividindo por 20 anos):**
-                - **Emissões anuais:** {formatar_br(media_anual_evitado_compostagem_organicos)} tCO₂e/ano
-                - **Valor anual em Euro:** {moeda_carbono} {formatar_br(valor_medio_anual_euros_comp_organicos)}/ano
-                - **Valor anual em Real:** R$ {formatar_br(valor_medio_anual_reais_comp_organicos)}/ano
-                
-                **💡 Vantagens dos resíduos orgânicos:**
-                - Já estão **segregados na fonte**, reduzindo custos de triagem
-                - **Alto teor de matéria orgânica**, ideal para compostagem/vermicompostagem
-                - Podem ser tratados **localmente**, reduzindo custos de transporte
-                - **Alto potencial de geração de créditos** devido à massa significativa
-                
-                **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
-                """)
-            
-            # Nota sobre atualização automática
-            st.info(f"""
-            **🔄 Atualização Automática - Resíduos Orgânicos:**
-            - As cotações são atualizadas automaticamente toda vez que você acessa o app
-            - Preço atual do carbono: **{moeda_carbono} {formatar_br(preco_carbono)}/tCO₂eq**
-            - Taxa de câmbio atual: **1 Euro = R$ {formatar_br(taxa_cambio)}**
-            - **Emissões Evitadas totais (orgânicos):** {formatar_br(co2eq_total_evitado_compostagem_20anos_organicos)} tCO₂e
-            - **Valor total dos créditos (orgânicos):** {moeda_carbono} {formatar_br(valor_total_euros_20anos_comp_organicos)} (ou R$ {formatar_br(valor_total_reais_20anos_comp_organicos)})
-            - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
-            """)
-        
-        else:
-            st.info("✅ Não há massa de orgânicos coletados seletivamente destinada a aterros. Todo o material já está sendo direcionado para tratamentos adequados!")
-    
-    else:
-        st.success("✅ Não há massa de orgânicos coletados seletivamente destinada a aterros. Todo o material já está sendo direcionado para tratamentos adequados!")
-        
-        # Nota sobre compostagem de orgânicos
-        st.info("""
-        **💡 Importante para resíduos orgânicos:**
-        - Resíduos orgânicos coletados seletivamente são **ideais para compostagem/vermicompostagem**
-        - Já estão **segregados na fonte**, reduzindo custos de triagem
-        - **Alto potencial de geração de créditos de carbono** devido à massa significativa
-        - Podem ser tratados **localmente**, reduzindo custos de transporte
-        - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
-        """)
-else:
-    st.info("ℹ️ Não foram encontrados registros de coleta seletiva de resíduos orgânicos para o município selecionado.")
-    st.write("""
-    **Nota:** A coleta seletiva de resíduos orgânicos é uma prática ainda em desenvolvimento no Brasil. 
-    Muitos municípios não possuem sistemas específicos para coleta de resíduos orgânicos, que muitas vezes 
-    são coletados junto com os resíduos indiferenciados.
-    """)
-
-st.markdown("---")
-
-# ============================================================
-# 🌳 DESTINAÇÃO DAS PODAS E GALHADAS DE ÁREAS VERDES PÚBLICAS
-# ============================================================
-
-st.subheader("🌳 Destinação das podas e galhadas de áreas verdes públicas")
-
-df_podas = df_mun[df_mun[COL_TIPO_COLETA].astype(str).str.contains("áreas verdes públicas", case=False, na=False)].copy()
-
-if not df_podas.empty:
-    df_podas["MASSA_FLOAT"] = pd.to_numeric(df_podas[COL_MASSA], errors="coerce").fillna(0)
-    total_podas = df_podas["MASSA_FLOAT"].sum()
-
-    df_podas_destino = df_podas.groupby(COL_DESTINO)["MASSA_FLOAT"].sum().reset_index()
-    df_podas_destino["Percentual (%)"] = df_podas_destino["MASSA_FLOAT"] / total_podas * 100
-    df_podas_destino = df_podas_destino.sort_values("Percentual (%)", ascending=False)
-
-    st.metric("Massa total de podas e galhadas", f"{formatar_numero_br(total_podas)} t")
-
-    df_view = df_podas_destino.copy()
-    df_view["Massa (t)"] = df_view["MASSA_FLOAT"].apply(formatar_numero_br)
-    df_view["Percentual (%)"] = df_view["Percentual (%)"].apply(lambda x: formatar_numero_br(x, 1))
-
-    st.dataframe(df_view[[COL_DESTINO, "Massa (t)", "Percentual (%)"]], use_container_width=True)
-
-    # =========================================================
-    # 🔥 Cálculo detalhado de emissões por tipo de destino (PODAS)
-    # =========================================================
-    st.subheader("🔥 Cálculo Detalhado de Emissões de CH₄ por Tipo de Destino (Podas e Galhadas)")
-    
-    # Adicionar coluna de MCF à tabela (SEM VERMICOMPOSTAGEM)
-    df_podas_destino["MCF"] = df_podas_destino[COL_DESTINO].apply(lambda x: determinar_mcf_por_destino(x, 'podas'))
-    
-    # Lista para armazenar resultados detalhados
-    resultados_emissoes = []
-    ch4_total_aterro_20anos = 0  # AGORA COM DECAIMENTO
-    massa_total_aterro_t = 0
-    
-    for _, row in df_podas_destino.iterrows():
-        destino = row[COL_DESTINO]
-        massa_t_ano = row["MASSA_FLOAT"]  # Massa ANUAL do ano selecionado
-        mcf = row["MCF"]
-        
-        # Só calcular emissões para destinos com MCF > 0 (aterros)
-        if mcf > 0 and massa_t_ano > 0:
-            # CÁLCULO COM DECAIMENTO (20 anos com entrada contínua) - MESMO MÉTODO DO SCRIPT TCO2E
-            ch4_20anos = calcular_ch4_total_aterro_20anos(massa_t_ano, mcf, 'podas')
-            
-            ch4_total_aterro_20anos += ch4_20anos
-            massa_total_aterro_t += massa_t_ano
-            
-            resultados_emissoes.append({
-                "Destino": destino,
-                "Massa anual (t)": formatar_numero_br(massa_t_ano),
-                "MCF": formatar_numero_br(mcf, 2),
-                "CH₄ Gerado (t) - 20 anos": formatar_numero_br(ch4_20anos, 3),
-                "Tipo de Aterro": classificar_tipo_aterro(mcf)
-            })
-    
-    # Se houver emissões de aterro, mostrar resultados
-    if resultados_emissoes:
-        st.dataframe(pd.DataFrame(resultados_emissoes), use_container_width=True)
-        
-        # =========================================================
-        # 📊 Comparação com Cenário de Compostagem (APENAS COMPOSTAGEM)
-        # =========================================================
-        st.subheader("📊 Comparação: Aterro vs Compostagem (Podas e Galhadas)")
-        
-        # Métricas comparativas ATUALIZADAS (com decaimento)
-        col1, col2, col3, col4 = st.columns(4)
-        
+            st.metric("Compostagem (Euro)", f"{moeda} {formatar_br(valor_compost_eur)}",
+                      help=f"{formatar_br(total_evitado_compost)} tCO₂eq evitadas")
+        col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric(
-                "Massa em aterros",
-                f"{formatar_numero_br(massa_total_aterro_t)} t",
-                help=f"Total de podas destinadas a aterros em {ano_selecionado} (base para projeção)"
-            )
-        
+            st.metric("Preço Carbono (R$)", f"R$ {formatar_br(preco_carbono * taxa_cambio)}/tCO₂eq",
+                      help="Preço convertido para Reais")
         with col2:
-            st.metric(
-                "CH₄ do aterro (20 anos)",
-                f"{formatar_numero_br(ch4_total_aterro_20anos, 1)} t",
-                delta=None,
-                help=f"CH₄ gerado em aterros em {ANOS_PROJECAO_CREDITOS} anos com decaimento (k={k_ano_PODAS} ano⁻¹)"
-            )
-        
-        # Nota explicativa sobre o método de cálculo
-        st.info(f"""
-        **🧮 Método de cálculo (ajustado para podas e galhadas):**
-        - **Tipo de resíduo:** Podas e galhadas (materiais lignocelulósicos)
-        - **Período:** {ANOS_PROJECAO_CREDITOS} anos com entrada contínua
-        - **Constante de decaimento (k):** {k_ano_PODAS} ano⁻¹ (reduzida para decomposição mais lenta)
-        - **DOC:** {DOC_PODAS} (carbono orgânico degradável - reduzido)
-        - **MCF:** Reduzido pela metade para materiais lenhosos
-        - **F (fração de CH₄):** {F_PODAS} (reduzida)
-        - **OX (oxidação):** {OX_PODAS} (aumentada)
-        - **TOC:** {TOC_YANG_PODAS} (aumentado - madeira tem ~50% C)
-        - **Fator de emissão CH₄ compostagem:** {CH4_C_FRAC_THERMO_PODAS} (reduzido drasticamente)
-        - **Período de compostagem:** {DIAS_COMPOSTAGEM_PODAS} dias (aumentado)
-        - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
-        """)
-        
-        # =============================================================================
-        # 🎯 CÁLCULO COM ENTRADA CONTÍNUA E DECAIMENTO PARA CRÉDITOS DE CARBONO (20 ANOS) - APENAS COMPOSTAGEM
-        # =============================================================================
-        st.markdown("---")
-        st.subheader("🎯 Projeção para Créditos de Carbono - Podas e Galhadas (20 anos com entrada contínua)")
-        
-        st.info(f"""
-        **Metodologia avançada para podas e galhadas:** Este cálculo considera **entrada contínua de podas** (mesma massa de {ano_selecionado} a cada ano)
-        e o **decaimento acumulado das emissões no aterro ao longo de {ANOS_PROJECAO_CREDITOS} anos**,
-        conforme modelo do IPCC 2006 ajustado para materiais lignocelulósicos.
-        
-        **⚠️ IMPORTANTE:** Para podas e galhadas, considera-se APENAS COMPOSTAGEM (não vermicompostagem), pois:
-        1. Materiais lenhosos têm **decomposição mais lenta**
-        2. **Baixo teor de nitrogênio** dificulta a vermicompostagem
-        3. **Alta relação C/N** exige processo de compostagem mais longo
-        4. **Fatores de emissão ajustados** para materiais lignocelulósicos
-        
-        **Parâmetros específicos:**
-        - **Período:** {ANOS_PROJECAO_CREDITOS} anos (padrão para projetos de créditos de carbono)
-        - **Entrada anual:** {formatar_numero_br(massa_total_aterro_t)} t/ano (mantendo massa de {ano_selecionado})
-        - **Total massa em 20 anos:** {formatar_numero_br(massa_total_aterro_t * ANOS_PROJECAO_CREDITOS)} t
-        - **Constante de decaimento (k):** {k_ano_PODAS} ano⁻¹ (reduzida)
-        - **GWP CH₄ (20 anos):** {GWP_CH4_20}
-        - **Considera decomposição gradual** dos resíduos de todos os anos
-        - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
-        """)
-        
-        # Calcular emissões COM ENTRADA CONTÍNUA para cada tipo de aterro (APENAS COMPOSTAGEM)
-        resultados_entrada_continua = []
-        co2eq_total_aterro_20anos = 0
-        co2eq_total_evitado_compostagem_20anos = 0
-        
-        for _, row in df_podas_destino.iterrows():
-            destino = row[COL_DESTINO]
-            massa_t_ano = row["MASSA_FLOAT"]  # Massa ANUAL do ano selecionado
-            mcf = row["MCF"]
-            
-            if mcf > 0 and massa_t_ano > 0:
-                # Calcular emissões com entrada contínua para 20 anos - APENAS COMPOSTAGEM
-                resultados = calcular_emissoes_totais_entrada_continua(massa_t_ano, mcf, 'podas')
-                
-                co2eq_total_aterro_20anos += resultados['co2eq_aterro_total']
-                co2eq_total_evitado_compostagem_20anos += resultados['co2eq_evitado_compostagem']
-                
-                resultados_entrada_continua.append({
-                    "Destino": destino,
-                    "Massa anual (t)": formatar_numero_br(massa_t_ano),
-                    "MCF": formatar_numero_br(mcf, 2),
-                    "Linha de Base (tCO₂e)": formatar_numero_br(resultados['co2eq_aterro_total'], 1),
-                    "Emissões Evitadas - Compostagem (tCO₂e)": formatar_numero_br(resultados['co2eq_evitado_compostagem'], 1),
-                    "Média anual evitada (tCO₂e/ano)": formatar_numero_br(resultados['co2eq_evitado_medio_anual_compostagem'], 1)
-                })
-        
-        if resultados_entrada_continua:
-            # Mostrar tabela de resultados com entrada contínua
-            st.dataframe(pd.DataFrame(resultados_entrada_continua), use_container_width=True)
-            
-            # Calcular médias anuais (dividindo por 20)
-            media_anual_evitado_compostagem = co2eq_total_evitado_compostagem_20anos / ANOS_PROJECAO_CREDITOS
-            
-            # Resumo geral
-            st.markdown("#### 📊 Resumo Geral da Projeção - Podas e Galhadas (20 anos)")
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric(
-                    "Massa total 20 anos",
-                    f"{formatar_numero_br(massa_total_aterro_t * ANOS_PROJECAO_CREDITOS)} t",
-                    help=f"{formatar_numero_br(massa_total_aterro_t)} t/ano × {ANOS_PROJECAO_CREDITOS} anos"
-                )
-            
-            with col2:
-                st.metric(
-                    "Linha de Base total (tCO₂e)",
-                    f"{formatar_numero_br(co2eq_total_aterro_20anos, 1)} tCO₂e",
-                    help="Emissões acumuladas do aterro em 20 anos (APENAS CH₄)"
-                )
-            
-            with col3:
-                st.metric(
-                    "Emissões Evitadas - Compostagem (tCO₂e)",
-                    f"{formatar_numero_br(co2eq_total_evitado_compostagem_20anos, 1)} tCO₂e",
-                    help="Emissões evitadas com compostagem em 20 anos (APENAS CH₄)"
-                )
-            
-            # =============================================================================
-            # 📈 GRÁFICO: REDUÇÃO DE EMISSÕES ACUMULADA - PODAS E GALHADAS (APENAS COMPOSTAGEM)
-            # =============================================================================
-            st.markdown("---")
-            st.subheader("📉 Redução de Emissões Acumulada - Podas e Galhadas (20 anos)")
-            
-            # Calcular dados para o gráfico (somar todos os destinos)
-            # Inicializar arrays de emissões diárias
-            datas = []
-            total_aterro_diario = np.zeros(DIAS_PROJECAO)
-            total_compostagem_diario = np.zeros(DIAS_PROJECAO)
-            
-            # Data inicial para o gráfico
-            data_inicio = datetime(2024, 1, 1)
-            
-            # Para cada destino, calcular emissões diárias e somar
-            for _, row in df_podas_destino.iterrows():
-                massa_t_ano = row["MASSA_FLOAT"]
-                mcf = row["MCF"]
-                
-                if mcf > 0 and massa_t_ano > 0:
-                    # Calcular emissões diárias detalhadas
-                    df_detalhado = calcular_emissoes_diarias_detalhadas(massa_t_ano, mcf, 'podas')
-                    
-                    # Somar às totais
-                    total_aterro_diario += df_detalhado['Emissoes_Aterro_tCO2eq_dia'].values
-                    total_compostagem_diario += df_detalhado['Emissoes_Compostagem_tCO2eq_dia'].values
-            
-            # Criar DataFrame para o gráfico
-            df_grafico = pd.DataFrame({
-                'Data': [data_inicio + timedelta(days=i) for i in range(DIAS_PROJECAO)],
-                'Total_Aterro_tCO2eq_dia': total_aterro_diario,
-                'Total_Compostagem_tCO2eq_dia': total_compostagem_diario
-            })
-            
-            # Calcular acumuladas
-            df_grafico['Total_Aterro_tCO2eq_acum'] = df_grafico['Total_Aterro_tCO2eq_dia'].cumsum()
-            df_grafico['Total_Compostagem_tCO2eq_acum'] = df_grafico['Total_Compostagem_tCO2eq_dia'].cumsum()
-            
-            # Criar gráfico
-            fig, ax = plt.subplots(figsize=(12, 6))
-            
-            # Plotar linhas (APENAS COMPOSTAGEM)
-            ax.plot(df_grafico['Data'], df_grafico['Total_Aterro_tCO2eq_acum'], 
-                   'brown', label='Cenário Base (Aterro Sanitário)', linewidth=2)
-            ax.plot(df_grafico['Data'], df_grafico['Total_Compostagem_tCO2eq_acum'], 
-                   'forestgreen', label='Projeto (Compostagem Termofílica)', linewidth=2)
-            
-            # Preencher área entre as linhas (emissões evitadas)
-            ax.fill_between(df_grafico['Data'], 
-                           df_grafico['Total_Compostagem_tCO2eq_acum'], 
-                           df_grafico['Total_Aterro_tCO2eq_acum'],
-                           color='lightgreen', alpha=0.3, label='Emissões Evitadas')
-            
-            # Configurar eixos
-            ax.set_title(f'Redução de Emissões Acumulada - Podas e Galhadas em {ANOS_PROJECAO_CREDITOS} Anos', fontsize=14, fontweight='bold')
-            ax.set_xlabel('Ano', fontsize=12)
-            ax.set_ylabel('tCO₂e Acumulado', fontsize=12)
-            
-            # Formatar eixo X para mostrar apenas anos
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-            ax.xaxis.set_major_locator(mdates.YearLocator(2))  # Mostrar a cada 2 anos
-            plt.xticks(rotation=45)
-            
-            # Formatar eixo Y no padrão brasileiro
-            br_formatter = FuncFormatter(br_format)
-            ax.yaxis.set_major_formatter(br_formatter)
-            
-            # Adicionar grid e legenda
-            ax.grid(True, linestyle='--', alpha=0.7)
-            ax.legend(loc='upper left', fontsize=10)
-            
-            # Ajustar layout
-            plt.tight_layout()
-            
-            # Mostrar gráfico no Streamlit
-            st.pyplot(fig)
-            
-            # Adicionar informações abaixo do gráfico
-            st.markdown(f"""
-            **📊 Interpretação do Gráfico - Podas e Galhadas:**
-            - **Linha Marrom:** Emissões acumuladas do cenário base (aterro sanitário) - **{formatar_numero_br(df_grafico['Total_Aterro_tCO2eq_acum'].iloc[-1], 1)} tCO₂e**
-            - **Linha Verde:** Emissões acumuladas do projeto (compostagem) - **{formatar_numero_br(df_grafico['Total_Compostagem_tCO2eq_acum'].iloc[-1], 1)} tCO₂e**
-            - **Área Verde:** Emissões evitadas pela compostagem - **{formatar_numero_br(co2eq_total_evitado_compostagem_20anos, 1)} tCO₂e**
-            
-            **💡 Observações específicas para podas e galhadas:**
-            1. **Materiais lignocelulósicos** têm decomposição mais lenta (k = {k_ano_PODAS} ano⁻¹)
-            2. **Menor produção de CH₄** devido à natureza aeróbica dos resíduos lenhosos
-            3. **Fatores de emissão reduzidos** para compostagem de materiais lenhosos
-            4. **Período de compostagem estendido** ({DIAS_COMPOSTAGEM_PODAS} dias vs {DIAS_COMPOSTAGEM_ORGANICO} dias para orgânicos)
-            5. **Somente compostagem** (sem vermicompostagem) devido às características dos materiais
-            6. **⚠️ APENAS CH₄:** Este gráfico considera somente emissões de metano (CH₄)
-            """)
-            
-            # =============================================================================
-            # SEÇÃO DE COTAÇÃO AUTOMÁTICA DO CARBONO - PODAS E GALHADAS
-            # =============================================================================
-            st.markdown("---")
-            st.subheader("💰 Mercado de Carbono - Valor Financeiro das Emissões Evitadas (Podas e Galhadas)")
-            
-            # Obter cotações automaticamente
-            with st.spinner("🔄 Obtendo cotações em tempo real..."):
-                # Obter cotação do carbono
-                preco_carbono, moeda_carbono, contrato_info, sucesso_carbono, fonte_carbono = obter_cotacao_carbono()
-                
-                # Obter cotação do Euro
-                taxa_cambio, moeda_real, sucesso_euro, fonte_euro = obter_cotacao_euro_real()
-            
-            # Exibir cotações atuais
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric(
-                    label=f"Preço do Carbono (tCO₂eq)",
-                    value=f"{moeda_carbono} {formatar_br(preco_carbono)}",
-                    help=f"Fonte: {fonte_carbono}"
-                )
-            
-            with col2:
-                st.metric(
-                    label="Euro (EUR/BRL)",
-                    value=f"{moeda_real} {formatar_br(taxa_cambio)}",
-                    help=f"Fonte: {fonte_euro}"
-                )
-            
-            with col3:
-                preco_carbono_reais = preco_carbono * taxa_cambio
-                st.metric(
-                    label=f"Carbono em Reais (tCO₂eq)",
-                    value=f"R$ {formatar_br(preco_carbono_reais)}",
-                    help="Preço do carbono convertido para Reais Brasileiros"
-                )
-            
-            # =============================================================================
-            # VALOR FINANCEIRO DAS EMISSÕES EVITADAS - PROJEÇÃO 20 ANOS COM ENTRADA CONTÍNUA (APENAS COMPOSTAGEM)
-            # =============================================================================
-            st.subheader("💵 Valor Financeiro do CO₂e Evitado - Podas e Galhadas (20 anos com entrada contínua)")
-            
-            # Calcular valores financeiros para 20 anos (TOTAL) - APENAS COMPOSTAGEM
-            valor_total_euros_20anos_comp = calcular_valor_creditos(
-                co2eq_total_evitado_compostagem_20anos, preco_carbono, moeda_carbono
-            )
-            valor_total_reais_20anos_comp = calcular_valor_creditos(
-                co2eq_total_evitado_compostagem_20anos, preco_carbono, "R$", taxa_cambio
-            )
-            
-            # Calcular médias anuais (dividir por 20)
-            valor_medio_anual_euros_comp = valor_total_euros_20anos_comp / ANOS_PROJECAO_CREDITOS
-            valor_medio_anual_reais_comp = valor_total_reais_20anos_comp / ANOS_PROJECAO_CREDITOS
-            
-            # Exibir resultados da projeção - COMPOSTAGEM (APENAS)
-            st.markdown("#### 🍂 Compostagem - Valor dos Créditos de Carbono (Podas e Galhadas)")
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric(
-                    "Emissões Evitadas (tCO₂e)",
-                    f"{formatar_br(co2eq_total_evitado_compostagem_20anos)} tCO₂e",
-                    help=f"Total em {ANOS_PROJECAO_CREDITOS} anos com entrada contínua (APENAS CH₄)"
-                )
-            
-            with col2:
-                st.metric(
-                    "Média anual (tCO₂e/ano)",
-                    f"{formatar_br(media_anual_evitado_compostagem)} tCO₂e/ano",
-                    help="Média anual (total ÷ 20) - APENAS CH₄"
-                )
-            
-            with col3:
-                st.metric(
-                    "Valor total (Euro)",
-                    f"{moeda_carbono} {formatar_br(valor_total_euros_20anos_comp)}",
-                    help=f"Valor acumulado em {ANOS_PROJECAO_CREDITOS} anos"
-                )
-            
-            with col4:
-                st.metric(
-                    "Valor médio anual (Euro)",
-                    f"{moeda_carbono} {formatar_br(valor_medio_anual_euros_comp)}/ano",
-                    help="Média anual (total ÷ 20)"
-                )
-            
-            # Linha 2: Compostagem em Reais
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.metric(
-                    "Valor total (R$)",
-                    f"R$ {formatar_br(valor_total_reais_20anos_comp)}",
-                    help=f"Valor acumulado em {ANOS_PROJECAO_CREDITOS} anos"
-                )
-            
-            with col2:
-                st.metric(
-                    "Valor médio anual (R$)",
-                    f"R$ {formatar_br(valor_medio_anual_reais_comp)}/ano",
-                    help="Média anual (total ÷ 20)"
-                )
-            
-            # Explicação sobre como calcular o valor
-            with st.expander("🧮 Como é calculado o valor dos créditos de carbono para podas e galhadas?"):
-                st.markdown(f"""
-                **📊 Fórmula de Cálculo:**
-                ```
-                Valor dos Créditos = Emissões Evitadas × Preço do Carbono
-                ```
-                
-                **📈 Para Compostagem de Podas e Galhadas:**
-                - **Emissões Evitadas:** {formatar_br(co2eq_total_evitado_compostagem_20anos)} tCO₂e
-                - **Preço do Carbono:** {moeda_carbono} {formatar_br(preco_carbono)}/tCO₂eq
-                - **Cálculo:** {formatar_br(co2eq_total_evitado_compostagem_20anos)} × {formatar_br(preco_carbono)} = {moeda_carbono} {formatar_br(valor_total_euros_20anos_comp)}
-                
-                **💰 Em Reais (com câmbio):**
-                - **Taxa de câmbio:** 1 Euro = R$ {formatar_br(taxa_cambio)}
-                - **Preço em Reais:** R$ {formatar_br(preco_carbono_reais)}/tCO₂eq
-                - **Cálculo:** {formatar_br(co2eq_total_evitado_compostagem_20anos)} × {formatar_br(preco_carbono_reais)} = R$ {formatar_br(valor_total_reais_20anos_comp)}
-                
-                **📅 Média Anual (dividindo por 20 anos):**
-                - **Emissões anuais:** {formatar_br(media_anual_evitado_compostagem)} tCO₂e/ano
-                - **Valor anual em Euro:** {moeda_carbono} {formatar_br(valor_medio_anual_euros_comp)}/ano
-                - **Valor anual em Real:** R$ {formatar_br(valor_medio_anual_reais_comp)}/ano
-                
-                **⚠️ IMPORTANTE para podas e galhadas:**
-                - **Somente compostagem** (sem vermicompostagem)
-                - **Fatores de emissão reduzidos** para materiais lignocelulósicos
-                - **Constante de decaimento reduzida** (k = {k_ano_PODAS} ano⁻¹)
-                - **Período de compostagem estendido** ({DIAS_COMPOSTAGEM_PODAS} dias)
-                - **Menor geração de CH₄** devido à natureza aeróbica dos resíduos
-                - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
-                """)
-            
-            # Nota sobre atualização automática
-            st.info(f"""
-            **🔄 Atualização Automática - Podas e Galhadas:**
-            - As cotações são atualizadas automaticamente toda vez que você acessa o app
-            - Preço atual do carbono: **{moeda_carbono} {formatar_br(preco_carbono)}/tCO₂eq**
-            - Taxa de câmbio atual: **1 Euro = R$ {formatar_br(taxa_cambio)}**
-            - **Emissões Evitadas totais (podas):** {formatar_br(co2eq_total_evitado_compostagem_20anos)} tCO₂e
-            - **Valor total dos créditos (podas):** {moeda_carbono} {formatar_br(valor_total_euros_20anos_comp)} (ou R$ {formatar_br(valor_total_reais_20anos_comp)})
-            
-            **🌳 Características específicas das podas:**
-            - **Tipo de resíduo:** Materiais lignocelulósicos (madeira, galhos)
-            - **DOC reduzido:** {DOC_PODAS} (vs {DOC_ORGANICO} para orgânicos)
-            - **Decomposição mais lenta:** k = {k_ano_PODAS} ano⁻¹ (vs {k_ano_ORGANICO} ano⁻¹)
-            - **Menor produção de CH₄:** Fatores de emissão reduzidos
-            - **Somente compostagem:** Não recomendada vermicompostagem
-            - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
-            """)
-            
-        else:
-            st.info("✅ Não há massa de podas e galhadas destinada a aterros. Todo o material já está sendo direcionado para tratamentos adequados!")
-    
-    else:
-        st.info("✅ Não há massa de podas e galhadas destinada a aterros. Todo o material já está sendo direcionado para tratamentos adequados!")
-        
-        # Nota específica sobre podas e galhadas
-        st.info("""
-        **🌳 Importante para podas e galhadas:**
-        - Podas e galhadas são **materiais lignocelulósicos** (madeira, galhos)
-        - Têm **decomposição mais lenta** que resíduos orgânicos alimentares
-        - **Baixo teor de nitrogênio**, ideal para compostagem (não vermicompostagem)
-        - **Alta relação C/N**, exigindo processo de compostagem mais longo
-        - **Menor produção de CH₄** devido à natureza aeróbica dos resíduos
-        - **Somente compostagem** é recomendada (sem vermicompostagem)
-        - **⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄)
-        """)
-    
-else:
-    st.info("Não há dados de podas e galhadas para o município selecionado.")
+            st.metric("Vermicompostagem (R$)", f"R$ {formatar_br(valor_vermi_brl)}",
+                      help=f"{formatar_br(total_evitado_vermi)} tCO₂eq evitadas")
+        with col3:
+            st.metric("Compostagem (R$)", f"R$ {formatar_br(valor_compost_brl)}",
+                      help=f"{formatar_br(total_evitado_compost)} tCO₂eq evitadas")
 
-# =========================================================
-# Rodapé
-# =========================================================
+        with st.expander("💡 Como funciona a comercialização no mercado de carbono?"):
+            st.markdown(f"""
+            **📊 Informações de Mercado:**
+            - Preço em Euro: {moeda} {formatar_br(preco_carbono)}/tCO₂eq
+            - Preço em Real: R$ {formatar_br(preco_carbono * taxa_cambio)}/tCO₂eq
+            - Taxa de câmbio: 1 Euro = R$ {formatar_br(taxa_cambio)}
+            - Fonte: {fonte_cotacao}
+            **💶 Comprar créditos (compensação):** Custo em Euro: {moeda} {formatar_br(valor_vermi_eur)} | Custo em Real: R$ {formatar_br(valor_vermi_brl)}
+            **💵 Vender créditos (comercialização):** Receita em Euro: {moeda} {formatar_br(valor_vermi_eur)} | Receita em Real: R$ {formatar_br(valor_vermi_brl)}
+            """)
+
+        # Resumo emissões evitadas
+        st.subheader("📊 Resumo das Emissões Evitadas (Cenário Otimista)")
+        media_anual_vermi = total_evitado_vermi / anos_simulacao
+        media_anual_compost = total_evitado_compost / anos_simulacao
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### 📋 Vermicompostagem")
+            st.metric("Total de emissões evitadas", f"{formatar_br(total_evitado_vermi)} tCO₂eq",
+                      help=f"Total em {anos_simulacao} anos")
+            st.metric("Média anual", f"{formatar_br(media_anual_vermi)} tCO₂eq/ano")
+        with col2:
+            st.markdown("#### 📋 Compostagem")
+            st.metric("Total de emissões evitadas", f"{formatar_br(total_evitado_compost)} tCO₂eq",
+                      help=f"Total em {anos_simulacao} anos")
+            st.metric("Média anual", f"{formatar_br(media_anual_compost)} tCO₂eq/ano")
+
+        # Gráfico de barras: comparação anual
+        st.subheader("📊 Comparação Anual das Emissões Evitadas (Cenário Otimista)")
+        df_evitadas_anual = pd.DataFrame({
+            'Year': df_anual_revisado['Year'],
+            'Vermicompostagem': df_anual_revisado['Emission reductions (t CO₂eq)'],
+            'Compostagem': df_comp_anual_revisado['Emission reductions (t CO₂eq)']
+        })
+        fig, ax = plt.subplots(figsize=(10, 6))
+        br_formatter = FuncFormatter(br_format)
+        x = np.arange(len(df_evitadas_anual['Year']))
+        bar_width = 0.35
+        ax.bar(x - bar_width/2, df_evitadas_anual['Vermicompostagem'], width=bar_width,
+               label='Vermicompostagem', edgecolor='black')
+        ax.bar(x + bar_width/2, df_evitadas_anual['Compostagem'], width=bar_width,
+               label='Compostagem', edgecolor='black', hatch='//')
+        for i, (v1, v2) in enumerate(zip(df_evitadas_anual['Vermicompostagem'],
+                                         df_evitadas_anual['Compostagem'])):
+            ax.text(i - bar_width/2, v1 + max(v1, v2)*0.01, formatar_br(v1),
+                    ha='center', fontsize=9, fontweight='bold')
+            ax.text(i + bar_width/2, v2 + max(v1, v2)*0.01, formatar_br(v2),
+                    ha='center', fontsize=9, fontweight='bold')
+        ax.set_xlabel('Ano')
+        ax.set_ylabel('Emissões Evitadas (t CO₂eq)')
+        ax.set_title('Comparação Anual: Vermicompostagem vs Compostagem')
+        ax.set_xticks(x)
+        ax.set_xticklabels(df_anual_revisado['Year'], fontsize=8)
+        ax.legend(title='Tecnologia')
+        ax.yaxis.set_major_formatter(br_formatter)
+        ax.grid(axis='y', linestyle='--', alpha=0.7)
+        st.pyplot(fig)
+        plt.close(fig)
+
+        # Gráfico de redução acumulada
+        st.subheader("📉 Redução de Emissões Acumulada (Cenário Otimista)")
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.plot(df['Data'], df['Total_Aterro_tCO2eq_acum'], 'r-',
+                label='Cenário Base (Aterro Sanitário)', linewidth=2)
+        ax.plot(df['Data'], df['Total_Vermi_tCO2eq_acum'], 'g-',
+                label='Vermicompostagem', linewidth=2)
+        ax.fill_between(df['Data'], df['Total_Vermi_tCO2eq_acum'],
+                        df['Total_Aterro_tCO2eq_acum'], color='skyblue',
+                        alpha=0.5, label='Emissões Evitadas')
+        ax.set_title(f'Redução de Emissões em {anos_simulacao} Anos (k = {formatar_br(k_ano)} ano⁻¹)')
+        ax.set_xlabel('Ano')
+        ax.set_ylabel('tCO₂eq Acumulado')
+        ax.legend()
+        ax.grid(True, linestyle='--', alpha=0.7)
+        ax.yaxis.set_major_formatter(br_formatter)
+        st.pyplot(fig)
+        plt.close(fig)
+
+        # --- ANÁLISE DE SENSIBILIDADE SOBOL (GWP-20) – sempre simulada para garantir robustez ---
+        st.subheader("🎯 Análise de Sensibilidade Global (Sobol) - Vermicompostagem (GWP-20)")
+        st.info("**Parâmetros variados:** Taxa de Decaimento (k), Temperatura (T), DOC")
+        br_formatter_sobol = FuncFormatter(br_format)
+
+        problem = {
+            'num_vars': 3,
+            'names': ['taxa_decaimento', 'T', 'DOC'],
+            'bounds': [[0.06, 0.40], [20.0, 40.0], [0.10, 0.25]]
+        }
+        param_values = sample(problem, n_samples, seed=50)
+        gwp20_ch4, gwp20_n2o = gwps["Otimista (GWP-20)"]
+
+        # Paralelismo com n_jobs=1 para compatibilidade total com Streamlit Cloud
+        results_vermi = Parallel(n_jobs=1)(
+            delayed(executar_simulacao_vermi_sobol)(params, gwp20_ch4, gwp20_n2o)
+            for params in param_values
+        )
+        Si_vermi = analyze(problem, np.array(results_vermi), print_to_console=False)
+
+        sensibilidade_df_vermi = pd.DataFrame({
+            'Parâmetro': problem['names'],
+            'S1': Si_vermi['S1'],
+            'ST': Si_vermi['ST']
+        }).sort_values('ST', ascending=False)
+        nomes_amigaveis = {
+            'taxa_decaimento': 'Taxa de Decaimento (k)',
+            'T': 'Temperatura',
+            'DOC': 'Carbono Orgânico Degradável'
+        }
+        sensibilidade_df_vermi['Parâmetro'] = sensibilidade_df_vermi['Parâmetro'].map(nomes_amigaveis)
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.barplot(x='ST', y='Parâmetro', data=sensibilidade_df_vermi, palette='viridis', ax=ax)
+        ax.set_title('Sensibilidade Global - Vermicompostagem (GWP-20)')
+        ax.set_xlabel('Índice ST (Sobol Total)')
+        ax.set_ylabel('Parâmetro')
+        ax.grid(axis='x', linestyle='--', alpha=0.7)
+        ax.xaxis.set_major_formatter(br_formatter_sobol)
+        for i, st_val in enumerate(sensibilidade_df_vermi['ST']):
+            ax.text(st_val, i, f' {formatar_br(st_val)}', va='center', fontweight='bold')
+        st.pyplot(fig)
+        plt.close(fig)
+        st.dataframe(sensibilidade_df_vermi.style.format({'S1': '{:.4f}', 'ST': '{:.4f}'}))
+
+        # Sobol para compostagem
+        st.subheader("🎯 Análise de Sensibilidade Global (Sobol) - Compostagem (GWP-20)")
+        st.info("**Parâmetros variados:** Taxa de Decaimento (k), Temperatura (T), DOC")
+        results_compost = Parallel(n_jobs=1)(
+            delayed(executar_simulacao_compostagem_sobol)(params, gwp20_ch4, gwp20_n2o)
+            for params in param_values
+        )
+        Si_compost = analyze(problem, np.array(results_compost), print_to_console=False)
+        sensibilidade_df_compost = pd.DataFrame({
+            'Parâmetro': problem['names'],
+            'S1': Si_compost['S1'],
+            'ST': Si_compost['ST']
+        }).sort_values('ST', ascending=False)
+        sensibilidade_df_compost['Parâmetro'] = sensibilidade_df_compost['Parâmetro'].map(nomes_amigaveis)
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.barplot(x='ST', y='Parâmetro', data=sensibilidade_df_compost, palette='viridis', ax=ax)
+        ax.set_title('Sensibilidade Global - Compostagem (GWP-20)')
+        ax.set_xlabel('Índice ST (Sobol Total)')
+        ax.set_ylabel('Parâmetro')
+        ax.grid(axis='x', linestyle='--', alpha=0.7)
+        ax.xaxis.set_major_formatter(br_formatter_sobol)
+        for i, st_val in enumerate(sensibilidade_df_compost['ST']):
+            ax.text(st_val, i, f' {formatar_br(st_val)}', va='center', fontweight='bold')
+        st.pyplot(fig)
+        plt.close(fig)
+        st.dataframe(sensibilidade_df_compost.style.format({'S1': '{:.4f}', 'ST': '{:.4f}'}))
+
+        # --- MONTE CARLO (todos os GWP) – sempre simulação real ---
+        st.subheader("🎲 Análise de Incerteza (Monte Carlo) - Comparação entre Cenários de GWP")
+        umidade_vals, temp_vals, doc_vals = gerar_parametros_mc(n_simulations)
+        mc_results = {}
+        for nome, (gwp_ch4, gwp_n2o) in gwps.items():
+            vermi_arr = []
+            thermo_arr = []
+            for i in range(n_simulations):
+                calc_mc = GHGEmissionCalculator()
+                calc_mc.GWP_CH4_20 = gwp_ch4
+                calc_mc.GWP_N2O_20 = gwp_n2o
+                res = calc_mc.calculate_avoided_emissions(
+                    waste_kg_day=residuos_kg_dia,
+                    k_year=k_ano,
+                    temperature_C=temp_vals[i],
+                    doc_fraction=doc_vals[i],
+                    moisture_fraction=umidade_vals[i],
+                    years=anos_simulacao,
+                    phi_baseline=0.85
+                )
+                vermi_arr.append(res['vermicomposting']['avoided_co2eq_t'])
+                thermo_arr.append(res['composting']['avoided_co2eq_t'])
+            mc_results[nome] = {
+                'vermicomposting': np.array(vermi_arr),
+                'composting': np.array(thermo_arr)
+            }
+
+        # Distribuições (vermicompostagem)
+        fig, ax = plt.subplots(figsize=(12, 6))
+        for nome, arr_dict in mc_results.items():
+            sns.kdeplot(arr_dict['vermicomposting'], label=nome, ax=ax, linewidth=2)
+        ax.set_title('Distribuição das Emissões Evitadas (Vermicompostagem)')
+        ax.set_xlabel('Emissões Evitadas (tCO₂eq)')
+        ax.set_ylabel('Densidade')
+        ax.legend()
+        ax.grid(alpha=0.3)
+        ax.xaxis.set_major_formatter(FuncFormatter(br_format))
+        st.pyplot(fig)
+        plt.close(fig)
+
+        # Estatísticas descritivas
+        stats_list = []
+        for nome, arr_dict in mc_results.items():
+            arr = arr_dict['vermicomposting']
+            stats_list.append({
+                "Cenário": nome,
+                "Média (tCO₂eq)": np.mean(arr),
+                "Mediana (tCO₂eq)": np.median(arr),
+                "Desvio Padrão": np.std(arr),
+                "IC 95% Inferior": np.percentile(arr, 2.5),
+                "IC 95% Superior": np.percentile(arr, 97.5)
+            })
+        df_mc_stats = pd.DataFrame(stats_list)
+        st.subheader("📊 Estatísticas do Monte Carlo - Vermicompostagem")
+        st.dataframe(df_mc_stats.style.format({
+            "Média (tCO₂eq)": lambda x: formatar_br(x),
+            "Mediana (tCO₂eq)": lambda x: formatar_br(x),
+            "Desvio Padrão": lambda x: formatar_br(x),
+            "IC 95% Inferior": lambda x: formatar_br(x),
+            "IC 95% Superior": lambda x: formatar_br(x)
+        }))
+
+        # --- ANÁLISE ESTATÍSTICA (Vermi vs Compost, GWP-20) ---
+        st.subheader("📊 Análise Estatística de Comparação (Vermicompostagem vs Compostagem)")
+        gwp_alvo = "Otimista (GWP-20)"
+        vermi_arr = mc_results[gwp_alvo]['vermicomposting']
+        compost_arr = mc_results[gwp_alvo]['composting']
+        diff = vermi_arr - compost_arr
+        shapiro_stat, shapiro_p = stats.shapiro(diff)
+        t_stat, t_p = stats.ttest_rel(vermi_arr, compost_arr)
+        w_stat, w_p = stats.wilcoxon(vermi_arr, compost_arr)
+        st.write(f"**Teste de normalidade (Shapiro‑Wilk):** estatística = {shapiro_stat:.5f}, p = {shapiro_p:.5f}")
+        st.write(f"**Teste t pareado:** t = {t_stat:.5f}, p = {t_p:.5f}")
+        st.write(f"**Teste de Wilcoxon:** estatística = {w_stat:.5f}, p = {w_p:.5f}")
+
+        # Tabela comparativa por GWP
+        comparacao_stats = []
+        for nome in gwps.keys():
+            v = mc_results[nome]['vermicomposting']
+            c = mc_results[nome]['composting']
+            d = v - c
+            comparacao_stats.append({
+                "Cenário GWP": nome,
+                "Diferença média (tCO₂eq)": np.mean(d),
+                "p‑normalidade": stats.shapiro(d)[1],
+                "p‑t pareado": stats.ttest_rel(v, c)[1],
+                "p‑Wilcoxon": stats.wilcoxon(v, c)[1]
+            })
+        df_comp_stats = pd.DataFrame(comparacao_stats)
+        st.dataframe(df_comp_stats.style.format({
+            "Diferença média (tCO₂eq)": lambda x: formatar_br(x),
+            "p‑normalidade": "{:.5f}",
+            "p‑t pareado": "{:.5f}",
+            "p‑Wilcoxon": "{:.5f}"
+        }))
+
+        # Tabelas anuais formatadas
+        st.subheader("📋 Resultados Anuais - Vermicompostagem (Cenário Otimista)")
+        df_anual_formatado = df_anual_revisado.copy()
+        for col in df_anual_formatado.columns:
+            if col != 'Year':
+                df_anual_formatado[col] = df_anual_formatado[col].apply(formatar_br)
+        st.dataframe(df_anual_formatado)
+
+        st.subheader("📋 Resultados Anuais - Compostagem (Cenário Otimista)")
+        df_comp_formatado = df_comp_anual_revisado.copy()
+        for col in df_comp_formatado.columns:
+            if col != 'Year':
+                df_comp_formatado[col] = df_comp_formatado[col].apply(formatar_br)
+        st.dataframe(df_comp_formatado)
+
+    # Reset do estado para permitir nova simulação
+    st.session_state.run_simulation = False
+
+else:
+    st.info("💡 Ajuste os parâmetros na barra lateral e clique em 'Executar Simulação' para ver os resultados.")
+
 st.markdown("---")
-st.caption(f"""
-Fonte: SNIS – Sistema Nacional de Informações sobre Saneamento (ano {ano_selecionado}) | 
-Metodologia: IPCC 2006, Yang et al. (2017) - Parâmetros ajustados por tipo de resíduo | 
-Cotações atualizadas automaticamente via Investing.com e APIs de câmbio | 
-Projeção de créditos de carbono: 20 anos com entrada contínua e decaimento acumulado | 
-**RESÍDUOS ORGÂNICOS:** k = {k_ano_ORGANICO} ano⁻¹, DOC = {DOC_ORGANICO}, TOC = {TOC_YANG_ORGANICO} | 
-**PODAS E GALHADAS:** k = {k_ano_PODAS} ano⁻¹, DOC = {DOC_PODAS}, TOC = {TOC_YANG_PODAS} |
-**⚠️ APENAS CH₄:** Este cálculo considera somente emissões de metano (CH₄), não incluindo N₂O
+st.markdown("""
+**📚 Referências por Cenário:**
+
+**Cenário de Baseline (Aterro Sanitário):**
+- Metano: IPCC (2006), UNFCCC (2016) e Wang et al. (2023)
+- Óxido Nitroso: Wang et al. (2017)
+- Metano e Óxido Nitroso no pré-descarte: Feng et al. (2020)
+- **Fator φ = 0,85 (UNFCCC, 2024) aplicado ao baseline para clima úmido**
+
+**Vermicompostagem (tecnologia proposta):**
+- Metano e Óxido Nitroso: Yang et al. (2017)
+
+**Compostagem termofílica (tecnologia comparativa):**
+- Protocolo AMS-III.F: UNFCCC (2016)
+- Fatores de emissões: Yang et al. (2017)
+
+**Cenários de Potencial de Aquecimento Global (GWP):**
+- **Otimista (GWP-20):** CH₄ = 79,7; N₂O = 273 (Forster et al., 2021)
+- **Realista (GWP-100):** CH₄ = 27,0; N₂O = 273 (Forster et al., 2021)
+- **Pessimista (GWP-500):** CH₄ = 7,2; N₂O = 130 (Forster et al., 2021)
+
+**⚠️ Nota de Reprodutibilidade:**
+- Todas as análises usam seed fixo (50) para garantir resultados reprodutíveis.
+- Métodos de cálculo idênticos aos utilizados na validação original.
+- **Modo IA:** Utiliza rede neural treinada com dados gerados pelo próprio simulador. A precisão é alta dentro dos limites dos parâmetros de treinamento. Para análises de sensibilidade e incerteza, o simulador físico ainda é utilizado.
 """)
