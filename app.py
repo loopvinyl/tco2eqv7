@@ -974,7 +974,7 @@ if st.session_state.get('run_simulation', False):
     # Reset do estado para permitir nova simulação
     st.session_state.run_simulation = False
 
-# ================= EXECUÇÃO DA OTIMIZAÇÃO BAYESIANA =================
+# ================= EXECUÇÃO DA OTIMIZAÇÃO BAYESIANA (CORRIGIDA) =================
 if st.session_state.get('run_bayes', False):
     with st.spinner('🔍 Executando otimização bayesiana... Isso pode levar alguns minutos.'):
         # Definir os espaços de busca
@@ -1001,6 +1001,9 @@ if st.session_state.get('run_bayes', False):
         # Recuperar melhor resultado
         best_k, best_T, best_DOC = res.x
         best_avoided = -res.fun  # porque minimizamos o negativo
+        
+        # --- Calcular o valor atual (com os parâmetros atuais da interface) ---
+        current_avoided = -objetivo_bayesiano([k_ano, T, DOC])
         
         # Exibir resultados
         st.header("🎯 Resultado da Otimização Bayesiana")
@@ -1030,20 +1033,19 @@ if st.session_state.get('run_bayes', False):
         st.subheader("📊 Comparação com os parâmetros atuais")
         df_comp_opt = pd.DataFrame({
             "Parâmetro": ["k (ano⁻¹)", "Temperatura (°C)", "DOC", "Emissões evitadas (tCO₂eq)"],
-            "Parâmetros atuais": [formatar_br(k_ano), formatar_br(T), formatar_br(DOC), formatar_br(results_all["Otimista (GWP-20)"]['vermicomposting']['avoided_co2eq_t'])],
+            "Parâmetros atuais": [formatar_br(k_ano), formatar_br(T), formatar_br(DOC), formatar_br(current_avoided)],
             "Parâmetros ótimos": [formatar_br(best_k), formatar_br(best_T), formatar_br(best_DOC), formatar_br(best_avoided)]
         })
         st.dataframe(df_comp_opt, use_container_width=True)
         
-        # Mostrar ganho percentual
-        ganho_percentual = (best_avoided / results_all["Otimista (GWP-20)"]['vermicomposting']['avoided_co2eq_t'] - 1) * 100
-        st.info(f"📈 **Ganho potencial:** {formatar_br(ganho_percentual)}% a mais de créditos de carbono ajustando os parâmetros.")
+        # Mostrar ganho percentual (evita divisão por zero)
+        if current_avoided > 0:
+            ganho_percentual = (best_avoided / current_avoided - 1) * 100
+            st.info(f"📈 **Ganho potencial:** {formatar_br(ganho_percentual)}% a mais de créditos de carbono ajustando os parâmetros.")
+        else:
+            st.info("📈 **Ganho potencial:** não foi possível calcular (emissões evitadas atuais = 0).")
         
         # Reset do estado
-        st.session_state.run_bayes = False
-
-else:
-    if 'run_bayes' not in st.session_state:
         st.session_state.run_bayes = False
 
 # Rodapé (igual ao original)
