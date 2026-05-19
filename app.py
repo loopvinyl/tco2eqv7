@@ -15,12 +15,11 @@ from SALib.sample.sobol import sample
 from SALib.analyze.sobol import analyze
 import yfinance as yf  # para obter cotação do carbono
 
-# [IA] Importações para rede neural e pré-processamento
-from sklearn.neural_network import MLPRegressor
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-import joblib
-import os
+# --- NOVAS IMPORTAÇÕES PARA OTIMIZAÇÃO BAYESIANA ---
+from skopt import gp_minimize
+from skopt.space import Real
+from skopt.utils import use_named_args
+from skopt.plots import plot_convergence
 
 # Semente fixa para reprodutibilidade
 np.random.seed(50)
@@ -247,115 +246,7 @@ class GHGEmissionCalculator:
         return results
 
 
-# ==================== [IA] REDE NEURAL PARA PREVISÃO RÁPIDA ====================
-def gerar_dados_treino(n_samples=8000, anos_simulacao=20, waste_kg_day=100):
-    """
-    Gera dados de treinamento usando o simulador real.
-    Retorna: X (k, T, DOC, umidade), y_vermi, y_compost (emissões evitadas em tCO₂eq)
-    """
-    np.random.seed(42)
-    X = []
-    y_vermi = []
-    y_compost = []
-    calc = GHGEmissionCalculator()
-    phi_baseline = 0.85
-    capture_fraction = 0.0
-
-    k_range = (0.06, 0.40)
-    T_range = (20, 40)
-    DOC_range = (0.10, 0.25)
-    umidade_range = (0.75, 0.95)
-
-    for _ in range(n_samples):
-        k = np.random.uniform(*k_range)
-        T = np.random.uniform(*T_range)
-        DOC = np.random.uniform(*DOC_range)
-        umidade = np.random.uniform(*umidade_range)
-        res = calc.calculate_avoided_emissions(
-            waste_kg_day, k, T, DOC, umidade, anos_simulacao,
-            phi_baseline=phi_baseline, capture_fraction=capture_fraction
-        )
-        X.append([k, T, DOC, umidade])
-        y_vermi.append(res['vermicomposting']['avoided_co2eq_t'])
-        y_compost.append(res['composting']['avoided_co2eq_t'])
-    return np.array(X), np.array(y_vermi), np.array(y_compost)
-
-def treinar_modelos_ia(force_retrain=False):
-    """Treina ou carrega modelos salvos (vermi e compost) e o scaler."""
-    modelo_vermi_path = "modelo_vermi.pkl"
-    modelo_compost_path = "modelo_compost.pkl"
-    scaler_path = "scaler_emissao.pkl"
-
-    if not force_retrain and os.path.exists(modelo_vermi_path) and os.path.exists(modelo_compost_path) and os.path.exists(scaler_path):
-        modelo_vermi = joblib.load(modelo_vermi_path)
-        modelo_compost = joblib.load(modelo_compost_path)
-        scaler = joblib.load(scaler_path)
-        return modelo_vermi, modelo_compost, scaler
-
-    with st.spinner("🔁 Gerando dados e treinando redes neurais (pode levar 1-2 minutos)..."):
-        X, y_vermi, y_compost = gerar_dados_treino(n_samples=8000)
-        X_train, X_test, y_train_vermi, y_test_vermi = train_test_split(X, y_vermi, test_size=0.2, random_state=42)
-        _, _, y_train_compost, y_test_compost = train_test_split(X, y_compost, test_size=0.2, random_state=42)
-
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
-
-        modelo_vermi = MLPRegressor(
-            hidden_layer_sizes=(64, 32, 16),
-            activation='relu',
-            solver='adam',
-            max_iter=500,
-            random_state=42,
-            early_stopping=True,
-            validation_fraction=0.1
-        )
-        modelo_vermi.fit(X_train_scaled, y_train_vermi)
-
-        modelo_compost = MLPRegressor(
-            hidden_layer_sizes=(64, 32, 16),
-            activation='relu',
-            solver='adam',
-            max_iter=500,
-            random_state=42,
-            early_stopping=True,
-            validation_fraction=0.1
-        )
-        modelo_compost.fit(X_train_scaled, y_train_compost)
-
-        # Salvar
-        joblib.dump(modelo_vermi, modelo_vermi_path)
-        joblib.dump(modelo_compost, modelo_compost_path)
-        joblib.dump(scaler, scaler_path)
-
-        # Avaliação
-        y_pred_vermi = modelo_vermi.predict(X_test_scaled)
-        y_pred_compost = modelo_compost.predict(X_test_scaled)
-        mae_vermi = np.mean(np.abs(y_pred_vermi - y_test_vermi))
-        mae_compost = np.mean(np.abs(y_pred_compost - y_test_compost))
-
-        st.success(f"✅ Modelos treinados! MAE Vermicompostagem: {mae_vermi:.2f} tCO₂eq | MAE Compostagem: {mae_compost:.2f} tCO₂eq")
-
-        # Gráfico de validação
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-        ax1.scatter(y_test_vermi, y_pred_vermi, alpha=0.5)
-        ax1.plot([y_test_vermi.min(), y_test_vermi.max()], [y_test_vermi.min(), y_test_vermi.max()], 'r--')
-        ax1.set_xlabel("Simulação real (tCO₂eq)")
-        ax1.set_ylabel("Previsão IA (tCO₂eq)")
-        ax1.set_title("Vermicompostagem")
-        ax2.scatter(y_test_compost, y_pred_compost, alpha=0.5)
-        ax2.plot([y_test_compost.min(), y_test_compost.max()], [y_test_compost.min(), y_test_compost.max()], 'r--')
-        ax2.set_xlabel("Simulação real (tCO₂eq)")
-        ax2.set_ylabel("Previsão IA (tCO₂eq)")
-        ax2.set_title("Compostagem Termofílica")
-        st.pyplot(fig)
-        plt.close(fig)
-
-    return modelo_vermi, modelo_compost, scaler
-
-# =============================================================================
 # FUNÇÕES DE COTAÇÃO (MERCADO DE CARBONO E CÂMBIO)
-# =============================================================================
 
 def obter_cotacao_carbono():
     """Obtém a cotação do carbono via Yahoo Finance (ticker CO2.L)."""
@@ -393,9 +284,8 @@ def obter_cotacao_euro_real():
 def calcular_valor_creditos(emissoes_evitadas_tco2eq, preco_carbono_por_tonelada, moeda, taxa_cambio=1):
     return emissoes_evitadas_tco2eq * preco_carbono_por_tonelada * taxa_cambio
 
-# =============================================================================
+
 # FUNÇÕES AUXILIARES DE FORMATAÇÃO BRASILEIRA
-# =============================================================================
 
 def formatar_br(numero):
     if pd.isna(numero):
@@ -418,9 +308,8 @@ def br_format(x, pos):
         return f"{x:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# =============================================================================
+
 # INTERFACE STREAMLIT – BARRA LATERAL E EXIBIÇÃO DE COTAÇÕES
-# =============================================================================
 
 def exibir_cotacao_carbono():
     """Exibe na barra lateral os preços do carbono e do câmbio EUR/BRL."""
@@ -507,17 +396,11 @@ def inicializar_session_state():
         st.session_state.cotacao_carregada = False
     if 'k_ano' not in st.session_state:
         st.session_state.k_ano = 0.06
-    # [IA] estados para modelos
-    if 'modelo_vermi' not in st.session_state:
-        st.session_state.modelo_vermi = None
-        st.session_state.modelo_compost = None
-        st.session_state.scaler_ia = None
 
 inicializar_session_state()
 
-# =============================================================================
+
 # INTERFACE PRINCIPAL E PARÂMETROS DE ENTRADA
-# =============================================================================
 
 st.title("Simulador de Emissões de tCO₂eq e Cálculo de Créditos de Carbono com Análise de Sensibilidade Global")
 st.markdown("Esta ferramenta projeta os Créditos de Carbono ao calcular as emissões de gases de efeito estufa para dois contextos de gestão de resíduos")
@@ -573,31 +456,24 @@ with st.sidebar:
     n_simulations = st.slider("Número de simulações Monte Carlo", 50, 1000, 100, 50)
     n_samples = st.slider("Número de amostras Sobol", 32, 256, 64, 16)
 
-    # [IA] Controles da rede neural
-    st.subheader("🤖 Modo IA (Previsão Rápida)")
-    usar_ia = st.checkbox("Usar previsão por Rede Neural (em vez da simulação completa)", value=False)
-    if usar_ia and (st.session_state.modelo_vermi is None or st.session_state.modelo_compost is None):
-        with st.spinner("Carregando/treinando modelos de IA..."):
-            modelo_v, modelo_c, scaler = treinar_modelos_ia()
-            st.session_state.modelo_vermi = modelo_v
-            st.session_state.modelo_compost = modelo_c
-            st.session_state.scaler_ia = scaler
-    if usar_ia:
-        if st.button("🔄 Retreinar modelos IA"):
-            with st.spinner("Retreinando..."):
-                modelo_v, modelo_c, scaler = treinar_modelos_ia(force_retrain=True)
-                st.session_state.modelo_vermi = modelo_v
-                st.session_state.modelo_compost = modelo_c
-                st.session_state.scaler_ia = scaler
-                st.success("Modelos retreinados com sucesso!")
-
     # Botão que aciona a simulação
     if st.button("🚀 Executar Simulação", type="primary"):
         st.session_state.run_simulation = True
 
-# =============================================================================
+    # ================= NOVA SEÇÃO: OTIMIZAÇÃO BAYESIANA =================
+    st.subheader("🎯 Otimização Bayesiana de Parâmetros")
+    with st.expander("🔍 Maximizar créditos de carbono (k, T, DOC)"):
+        st.markdown("""
+        A otimização bayesiana busca **automaticamente** a combinação de **k (taxa de decaimento)**, **T (temperatura)** e **DOC (carbono orgânico)** que **maximiza as emissões evitadas** (créditos de carbono) para a vermicompostagem.
+        """)
+        otimizar = st.button("🔧 Executar Otimização Bayesiana", key="otimizar_bayes")
+        if otimizar:
+            st.session_state.run_bayes = True
+        else:
+            st.session_state.run_bayes = False
+
+
 # FUNÇÕES AUXILIARES PARA SIMULAÇÃO (GWP, SOBOL, MONTE CARLO)
-# =============================================================================
 
 def compute_results_for_gwp(gwp_ch4, gwp_n2o, waste_kg_day, k_year, temperature_C,
                             doc_fraction, moisture_fraction, years, phi_baseline=0.85):
@@ -654,9 +530,40 @@ def gerar_parametros_mc(n):
     doc_vals = np.random.triangular(0.12, 0.15, 0.18, n)
     return umidade_vals, temp_vals, doc_vals
 
-# =============================================================================
+
+# ================= FUNÇÃO PARA OTIMIZAÇÃO BAYESIANA =================
+def objetivo_bayesiano(params):
+    """
+    Função objetivo para a otimização bayesiana.
+    params = [k_ano, T, DOC]
+    Retorna o negativo das emissões evitadas (para maximizar).
+    """
+    k_opt, T_opt, DOC_opt = params
+    # Garantir limites razoáveis (os mesmos da análise Sobol)
+    k_opt = np.clip(k_opt, 0.06, 0.40)
+    T_opt = np.clip(T_opt, 20.0, 40.0)
+    DOC_opt = np.clip(DOC_opt, 0.10, 0.25)
+    
+    # Usar valores padrão do restante da interface
+    calc = GHGEmissionCalculator()
+    # GWP-20 (cenário otimista)
+    calc.GWP_CH4_20 = 79.7
+    calc.GWP_N2O_20 = 273
+    res = calc.calculate_avoided_emissions(
+        waste_kg_day=residuos_kg_dia,
+        k_year=k_opt,
+        temperature_C=T_opt,
+        doc_fraction=DOC_opt,
+        moisture_fraction=umidade,
+        years=anos_simulacao,
+        phi_baseline=0.85
+    )
+    evitado = res['vermicomposting']['avoided_co2eq_t']
+    # Retorna negativo para maximizar
+    return -evitado
+
+
 # EXECUÇÃO DA SIMULAÇÃO (QUANDO BOTÃO FOR CLICADO)
-# =============================================================================
 
 if st.session_state.get('run_simulation', False):
     with st.spinner('Executando simulação...'):
@@ -667,44 +574,17 @@ if st.session_state.get('run_simulation', False):
             "Pessimista (GWP-500)": (7.2, 130)
         }
 
-        # ========== [IA] Verifica se usa IA para resultados principais ==========
-        if usar_ia and st.session_state.modelo_vermi is not None and st.session_state.modelo_compost is not None:
-            # Previsão rápida para o cenário Otimista (GWP-20)
-            X_input = np.array([[k_ano, T, DOC, umidade]])
-            X_scaled = st.session_state.scaler_ia.transform(X_input)
-            total_evitado_vermi = st.session_state.modelo_vermi.predict(X_scaled)[0]
-            total_evitado_compost = st.session_state.modelo_compost.predict(X_scaled)[0]
+        # Resultados determinísticos para cada GWP
+        results_all = {}
+        for nome, (gwp_ch4, gwp_n2o) in gwps.items():
+            results_all[nome] = compute_results_for_gwp(
+                gwp_ch4, gwp_n2o, residuos_kg_dia, k_ano, T, DOC, umidade, anos_simulacao
+            )
 
-            # Construímos um dicionário results_all simulado apenas para manter compatibilidade
-            results_all = {}
-            for nome, (gwp_ch4, gwp_n2o) in gwps.items():
-                if nome == "Otimista (GWP-20)":
-                    # Usa valores previstos
-                    results_all[nome] = {
-                        'vermicomposting': {'avoided_co2eq_t': total_evitado_vermi},
-                        'composting': {'avoided_co2eq_t': total_evitado_compost}
-                    }
-                else:
-                    # Para outros GWP, usamos simulação completa (ou poderíamos ter modelos separados)
-                    # Aqui apenas para manter a tabela comparativa, usamos uma estimativa proporcional
-                    factor = (gwp_ch4 + gwp_n2o) / (79.7 + 273)  # simplificação grosseira
-                    results_all[nome] = {
-                        'vermicomposting': {'avoided_co2eq_t': total_evitado_vermi * factor},
-                        'composting': {'avoided_co2eq_t': total_evitado_compost * factor}
-                    }
-            results = results_all["Otimista (GWP-20)"]
+        # Resultados do cenário Otimista (GWP-20) para gráficos e tabelas principais
+        results = results_all["Otimista (GWP-20)"]
 
-            st.info("🤖 **Modo IA ativo:** Os valores de emissões evitadas foram previstos por rede neural treinada com base no simulador físico. A análise Sobol e Monte Carlo ainda utilizam simulação real para manter a precisão científica.")
-        else:
-            # Simulação completa determinística para cada GWP
-            results_all = {}
-            for nome, (gwp_ch4, gwp_n2o) in gwps.items():
-                results_all[nome] = compute_results_for_gwp(
-                    gwp_ch4, gwp_n2o, residuos_kg_dia, k_ano, T, DOC, umidade, anos_simulacao
-                )
-            results = results_all["Otimista (GWP-20)"]
-
-        # --- Geração de dados diários para gráficos (apenas GWP-20, sempre via simulação real para garantir qualidade) ---
+        # --- Geração de dados diários para gráficos (apenas GWP-20) ---
         dias = anos_simulacao * 365
         datas = pd.date_range(start=datetime.now(), periods=dias, freq='D')
 
@@ -768,19 +648,16 @@ if st.session_state.get('run_simulation', False):
 
         # --- EXIBIÇÃO DE RESULTADOS ---
         st.header("📈 Resultados da Simulação")
-        if usar_ia:
-            st.info("🤖 **Resultados principais gerados por Rede Neural** (validação no treinamento). As análises de sensibilidade e incerteza abaixo seguem o simulador físico original.")
-        else:
-            st.info(f"""
-            **Parâmetros utilizados na simulação:**
-            - Taxa de decaimento (k): {formatar_br(k_ano)} ano⁻¹
-            - Temperatura (T): {formatar_br(T)} °C
-            - DOC: {formatar_br(DOC)}
-            - Umidade: {formatar_br(umidade_valor)}%
-            - Resíduos/dia: {formatar_br(residuos_kg_dia)} kg
-            - Total de resíduos: {formatar_br(residuos_kg_dia * 365 * anos_simulacao / 1000)} toneladas
-            - Fator φ (baseline): 0,85 (UNFCCC 2024 - clima úmido)
-            """)
+        st.info(f"""
+        **Parâmetros utilizados na simulação:**
+        - Taxa de decaimento (k): {formatar_br(k_ano)} ano⁻¹
+        - Temperatura (T): {formatar_br(T)} °C
+        - DOC: {formatar_br(DOC)}
+        - Umidade: {formatar_br(umidade_valor)}%
+        - Resíduos/dia: {formatar_br(residuos_kg_dia)} kg
+        - Total de resíduos: {formatar_br(residuos_kg_dia * 365 * anos_simulacao / 1000)} toneladas
+        - Fator φ (baseline): 0,85 (UNFCCC 2024 - clima úmido)
+        """)
 
         # Tabela comparativa de GWP
         st.subheader("📊 Comparação entre Cenários de GWP")
@@ -910,7 +787,7 @@ if st.session_state.get('run_simulation', False):
         st.pyplot(fig)
         plt.close(fig)
 
-        # --- ANÁLISE DE SENSIBILIDADE SOBOL (GWP-20) – sempre simulada para garantir robustez ---
+        # --- ANÁLISE DE SENSIBILIDADE SOBOL (GWP-20) ---
         st.subheader("🎯 Análise de Sensibilidade Global (Sobol) - Vermicompostagem (GWP-20)")
         st.info("**Parâmetros variados:** Taxa de Decaimento (k), Temperatura (T), DOC")
         br_formatter_sobol = FuncFormatter(br_format)
@@ -983,7 +860,7 @@ if st.session_state.get('run_simulation', False):
         plt.close(fig)
         st.dataframe(sensibilidade_df_compost.style.format({'S1': '{:.4f}', 'ST': '{:.4f}'}))
 
-        # --- MONTE CARLO (todos os GWP) – sempre simulação real ---
+        # --- MONTE CARLO (todos os GWP) ---
         st.subheader("🎲 Análise de Incerteza (Monte Carlo) - Comparação entre Cenários de GWP")
         umidade_vals, temp_vals, doc_vals = gerar_parametros_mc(n_simulations)
         mc_results = {}
@@ -1097,9 +974,79 @@ if st.session_state.get('run_simulation', False):
     # Reset do estado para permitir nova simulação
     st.session_state.run_simulation = False
 
-else:
-    st.info("💡 Ajuste os parâmetros na barra lateral e clique em 'Executar Simulação' para ver os resultados.")
+# ================= EXECUÇÃO DA OTIMIZAÇÃO BAYESIANA =================
+if st.session_state.get('run_bayes', False):
+    with st.spinner('🔍 Executando otimização bayesiana... Isso pode levar alguns minutos.'):
+        # Definir os espaços de busca
+        space = [
+            Real(0.06, 0.40, name='k_ano'),
+            Real(20.0, 40.0, name='T'),
+            Real(0.10, 0.25, name='DOC')
+        ]
+        
+        @use_named_args(space)
+        def objective(**params):
+            return objetivo_bayesiano([params['k_ano'], params['T'], params['DOC']])
+        
+        # Executar a otimização
+        res = gp_minimize(
+            func=objective,
+            dimensions=space,
+            n_calls=30,            # número de avaliações da função objetivo
+            n_initial_points=10,   # pontos iniciais aleatórios
+            random_state=50,
+            verbose=False
+        )
+        
+        # Recuperar melhor resultado
+        best_k, best_T, best_DOC = res.x
+        best_avoided = -res.fun  # porque minimizamos o negativo
+        
+        # Exibir resultados
+        st.header("🎯 Resultado da Otimização Bayesiana")
+        st.success("A combinação de parâmetros que **maximiza os créditos de carbono** (emissões evitadas) foi encontrada!")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("📉 Taxa de decaimento (k) ótima", f"{formatar_br(best_k)} ano⁻¹")
+        with col2:
+            st.metric("🌡️ Temperatura ótima (T)", f"{formatar_br(best_T)} °C")
+        with col3:
+            st.metric("🌿 DOC ótimo", f"{formatar_br(best_DOC)}")
+        
+        st.metric("🚀 Emissões evitadas máximas (tCO₂eq)", formatar_br(best_avoided), delta=None)
+        
+        # Gráfico de convergência
+        fig, ax = plt.subplots(figsize=(10, 6))
+        plot_convergence(res, ax=ax)
+        ax.set_title("Convergência da Otimização Bayesiana")
+        ax.set_xlabel("Número de avaliações")
+        ax.set_ylabel("Valor da função (negativo das emissões evitadas)")
+        ax.grid(True, linestyle='--', alpha=0.7)
+        st.pyplot(fig)
+        plt.close(fig)
+        
+        # Tabela com os melhores parâmetros encontrados
+        st.subheader("📊 Comparação com os parâmetros atuais")
+        df_comp_opt = pd.DataFrame({
+            "Parâmetro": ["k (ano⁻¹)", "Temperatura (°C)", "DOC", "Emissões evitadas (tCO₂eq)"],
+            "Parâmetros atuais": [formatar_br(k_ano), formatar_br(T), formatar_br(DOC), formatar_br(results_all["Otimista (GWP-20)"]['vermicomposting']['avoided_co2eq_t'])],
+            "Parâmetros ótimos": [formatar_br(best_k), formatar_br(best_T), formatar_br(best_DOC), formatar_br(best_avoided)]
+        })
+        st.dataframe(df_comp_opt, use_container_width=True)
+        
+        # Mostrar ganho percentual
+        ganho_percentual = (best_avoided / results_all["Otimista (GWP-20)"]['vermicomposting']['avoided_co2eq_t'] - 1) * 100
+        st.info(f"📈 **Ganho potencial:** {formatar_br(ganho_percentual)}% a mais de créditos de carbono ajustando os parâmetros.")
+        
+        # Reset do estado
+        st.session_state.run_bayes = False
 
+else:
+    if 'run_bayes' not in st.session_state:
+        st.session_state.run_bayes = False
+
+# Rodapé (igual ao original)
 st.markdown("---")
 st.markdown("""
 **📚 Referências por Cenário:**
@@ -1125,5 +1072,4 @@ st.markdown("""
 **⚠️ Nota de Reprodutibilidade:**
 - Todas as análises usam seed fixo (50) para garantir resultados reprodutíveis.
 - Métodos de cálculo idênticos aos utilizados na validação original.
-- **Modo IA:** Utiliza rede neural treinada com dados gerados pelo próprio simulador. A precisão é alta dentro dos limites dos parâmetros de treinamento. Para análises de sensibilidade e incerteza, o simulador físico ainda é utilizado.
 """)
